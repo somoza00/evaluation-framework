@@ -1,4 +1,4 @@
-"""Configuração central da aplicação (pydantic-settings)."""
+"""Configuração central da aplicação via pydantic-settings."""
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -6,18 +6,18 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     """Configurações lidas de variáveis de ambiente ou de backend/.env.
 
-    Defaults existem apenas para dev local; em produção os valores
-    vêm do ambiente (docker-compose, CI, etc).
+    DATABASE_URL, GATEWAY_URL e GATEWAY_API_KEY são obrigatórias;
+    sem elas (ou sem o arquivo .env) a instanciação falha de propósito.
     """
 
-    model_config = SettingsConfigDict(
-        env_file=".env", env_file_encoding="utf-8", extra="ignore"
-    )
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    database_url: str = "postgresql+asyncpg://eval:eval@localhost:5432/evaluation"
-    gateway_url: str = "http://localhost:8000"
-    gateway_api_key: str = "sk-local"
-    judge_model: str = "deepseek/deepseek-chat"
+    DATABASE_URL: str
+    GATEWAY_URL: str
+    GATEWAY_API_KEY: str
+    JUDGE_MODEL: str = "deepseek/deepseek-chat"
+    APP_ENV: str = "development"
+    CORS_ORIGINS: list[str] = ["http://localhost:5174"]
 
 
-settings = Settings()
+settings = Settings()  # type: ignore[call-arg]  # campos obrigatórios vêm do ambiente/.env, não de kwargs

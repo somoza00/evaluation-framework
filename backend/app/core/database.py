@@ -3,7 +3,6 @@
 from collections.abc import AsyncGenerator
 
 from sqlalchemy.ext.asyncio import (
-    AsyncEngine,
     AsyncSession,
     async_sessionmaker,
     create_async_engine,
@@ -17,11 +16,11 @@ class Base(DeclarativeBase):
     """Base declarativa usada por todos os models (e pelo Alembic)."""
 
 
-engine: AsyncEngine = create_async_engine(settings.database_url)
-async_session_factory = async_sessionmaker(engine, expire_on_commit=False)
+engine = create_async_engine(settings.DATABASE_URL, echo=False)
+AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 
 
 async def get_session() -> AsyncGenerator[AsyncSession, None]:
     """Dependency do FastAPI: entrega uma AsyncSession por request."""
-    raise NotImplementedError
-    yield  # pragma: no cover — mantém a assinatura como async generator
+    async with AsyncSessionLocal() as session:
+        yield session
