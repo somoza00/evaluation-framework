@@ -15,10 +15,17 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    networks:
+      - eval-net
 
   backend:
     build: ./backend
+    env_file:
+      # Obrigatório no compose 2.24+; sobe com defaults se o .env não existir.
+      - path: .env
+        required: false
     environment:
+      # environment sobrescreve o .env: dentro da rede, o banco é o serviço db.
       DATABASE_URL: postgresql+asyncpg://eval:eval@db:5432/evaluation
       GATEWAY_URL: http://host.docker.internal:8000
       GATEWAY_API_KEY: ${GATEWAY_API_KEY:-sk-local}
@@ -31,9 +38,14 @@ services:
     extra_hosts:
       # Permite o container alcançar o myown-llm-gateway rodando no host (porta 8000).
       - "host.docker.internal:host-gateway"
+    networks:
+      - eval-net
 
   frontend:
     build: ./frontend
+    env_file:
+      - path: .env
+        required: false
     environment:
       # Proxy do Vite aponta para o backend dentro da rede do compose.
       VITE_PROXY_TARGET: http://backend:8001
@@ -41,6 +53,12 @@ services:
       - "5174:5174"
     depends_on:
       - backend
+    networks:
+      - eval-net
 
 volumes:
   pgdata:
+
+networks:
+  eval-net:
+    driver: bridge

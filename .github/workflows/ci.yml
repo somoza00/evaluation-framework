@@ -8,6 +8,9 @@ on:
 jobs:
   backend:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
     defaults:
       run:
         working-directory: backend
@@ -15,7 +18,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ matrix.python-version }}
       - name: Install dependencies
         run: pip install -e ".[dev]"
       - name: Lint (ruff)
@@ -25,7 +28,9 @@ jobs:
       - name: Tests (pytest)
         run: pytest
         env:
-          DATABASE_URL: postgresql+asyncpg://eval:test@localhost:5432/evaluation_test
+          # Testes usam SQLite in-memory (conftest.py) — sem serviço Postgres.
+          # As vars existem apenas para o Settings obrigatório do app importar.
+          DATABASE_URL: sqlite+aiosqlite://
           GATEWAY_URL: http://localhost:8000
           GATEWAY_API_KEY: ci-test-key
           JUDGE_MODEL: deepseek/deepseek-chat
