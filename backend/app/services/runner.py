@@ -32,6 +32,10 @@ class EvaluationRunner:
             model=settings.JUDGE_MODEL,
         )
 
+    async def close(self) -> None:
+        """Fecha o client HTTP do LLMJudge (chamar sempre após run(), inclusive em falha)."""
+        await self.llm_judge.close()
+
     async def run(self, run_id: uuid.UUID) -> None:
         """Executa uma run completa: pending -> running -> done (ou failed).
 
