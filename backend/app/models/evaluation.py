@@ -1,14 +1,33 @@
-"""Models SQLAlchemy de EvaluationRun e EvaluationResult."""
+"""Models SQLAlchemy de EvaluationRun/EvaluationResult + enums do fluxo."""
 
+import enum
+import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import DateTime, Enum, Float, ForeignKey, String, Text, func
+from sqlalchemy import Enum as SQLAlchemyEnum
+from sqlalchemy import ForeignKey, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
-from app.models.judge import JudgeType, RunStatus
+
+
+class JudgeType(str, enum.Enum):
+    """Tipo de judge usado em uma evaluation run."""
+
+    DETERMINISTIC = "deterministic"
+    LLM = "llm"
+    BOTH = "both"
+
+
+class RunStatus(str, enum.Enum):
+    """Ciclo de vida de uma evaluation run."""
+
+    PENDING = "pending"
+    RUNNING = "running"
+    DONE = "done"
+    FAILED = "failed"
 
 
 class EvaluationRun(Base):
@@ -16,21 +35,19 @@ class EvaluationRun(Base):
 
     __tablename__ = "evaluation_runs"
 
-    id: Mapped[int] = mapped_column(primary_key=True)
-    dataset_id: Mapped[int] = mapped_column(
-        ForeignKey("datasets.id", ondelete="CASCADE"), index=True
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    dataset_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("datasets.id"), nullable=False
     )
-    model: Mapped[str] = mapped_column(String(255))
+    model: Mapped[str] = mapped_column(String(255), nullable=False)
     judge_type: Mapped[JudgeType] = mapped_column(
-        Enum(JudgeType, name="judge_type"), default=JudgeType.LLM
+        SQLAlchemyEnum(JudgeType), nullable=False
     )
     status: Mapped[RunStatus] = mapped_column(
-        Enum(RunStatus, name="run_status"), default=RunStatus.PENDING
+        SQLAlchemyEnum(RunStatus), default=RunStatus.PENDING
     )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
-    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
+    finished_at: Mapped[datetime | None] = mapped_column(nullable=True)
 
     results: Mapped[list["EvaluationResult"]] = relationship(back_populates="run")
 
@@ -40,18 +57,21 @@ class EvaluationResult(Base):
 
     __tablename__ = "evaluation_results"
 
-    id: Mapped[int] = mapped_column(primary_key=True)
-    run_id: Mapped[int] = mapped_column(
-        ForeignKey("evaluation_runs.id", ondelete="CASCADE"), index=True
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("evaluation_runs.id"), nullable=False
     )
-    sample_id: Mapped[int] = mapped_column(ForeignKey("samples.id", ondelete="CASCADE"))
-    actual_output: Mapped[str] = mapped_column(Text)
-    score_fidelity: Mapped[float | None] = mapped_column(Float)
-    score_coherence: Mapped[float | None] = mapped_column(Float)
-    score_instruction: Mapped[float | None] = mapped_column(Float)
-    score_overall: Mapped[float | None] = mapped_column(Float)
-    judge_reasoning: Mapped[str | None] = mapped_column(Text)
+    sample_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("samples.id"), nullable=False
+    )
+    actual_output: Mapped[str] = mapped_column(Text, nullable=False)
+    # Mapped[float | None] sem mapped_column: coluna Float nullable inferida.
+    score_fidelity: Mapped[float | None]
+    score_coherence: Mapped[float | None]
+    score_instruction: Mapped[float | None]
+    score_overall: Mapped[float | None]
+    judge_reasoning: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Coluna "metadata" no banco; atributo metadata_ (ver dataset.py).
     metadata_: Mapped[dict[str, Any]] = mapped_column("metadata", JSONB, default=dict)
 
-    run: Mapped[EvaluationRun] = relationship(back_populates="results")
+    run: Mapped["EvaluationRun"] = relationship(back_populates="results")

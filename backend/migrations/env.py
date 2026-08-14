@@ -1,7 +1,8 @@
 """Alembic environment — configuração async (SQLAlchemy 2.0 + asyncpg).
 
 Template padrão do Alembic para engine assíncrona; a URL é injetada
-a partir de app.core.config.settings.database_url.
+a partir de app.core.config.settings.DATABASE_URL. Importar app.models
+registra todas as tabelas no metadata para o autogenerate detectar.
 """
 
 import asyncio
@@ -20,7 +21,7 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-config.set_main_option("sqlalchemy.url", settings.database_url)
+config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
 
 target_metadata = Base.metadata
 

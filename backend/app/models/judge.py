@@ -1,20 +1,12 @@
-"""Enums compartilhados do fluxo de avaliação (judge e status da run)."""
+"""Configuração do judge LLM (Pydantic, não SQLAlchemy)."""
 
-from enum import Enum
-
-
-class JudgeType(str, Enum):
-    """Tipo de judge usado em uma evaluation run."""
-
-    DETERMINISTIC = "deterministic"
-    LLM = "llm"
-    BOTH = "both"
+from pydantic import BaseModel
 
 
-class RunStatus(str, Enum):
-    """Ciclo de vida de uma evaluation run."""
+class JudgeConfig(BaseModel):
+    """Parâmetros do judge LLM enviados ao gateway."""
 
-    PENDING = "pending"
-    RUNNING = "running"
-    DONE = "done"
-    FAILED = "failed"
+    model: str
+    temperature: float = 0.0
+    max_tokens: int = 1024
+    rubric: dict[str, str] = {}  # critério -> descrição
