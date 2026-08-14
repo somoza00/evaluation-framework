@@ -1,0 +1,46 @@
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: eval
+      POSTGRES_PASSWORD: eval
+      POSTGRES_DB: evaluation
+    ports:
+      # 5433 no host para não conflitar com Postgres locais (ex: stack Argos)
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U eval -d evaluation"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build: ./backend
+    environment:
+      DATABASE_URL: postgresql+asyncpg://eval:eval@db:5432/evaluation
+      GATEWAY_URL: http://host.docker.internal:8000
+      GATEWAY_API_KEY: ${GATEWAY_API_KEY:-sk-local}
+      JUDGE_MODEL: ${JUDGE_MODEL:-deepseek/deepseek-chat}
+    ports:
+      - "8001:8001"
+    depends_on:
+      db:
+        condition: service_healthy
+    extra_hosts:
+      # Permite o container alcançar o myown-llm-gateway rodando no host (porta 8000).
+      - "host.docker.internal:host-gateway"
+
+  frontend:
+    build: ./frontend
+    environment:
+      # Proxy do Vite aponta para o backend dentro da rede do compose.
+      VITE_PROXY_TARGET: http://backend:8001
+    ports:
+      - "5174:5174"
+    depends_on:
+      - backend
+
+volumes:
+  pgdata:
