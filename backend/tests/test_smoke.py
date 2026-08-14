@@ -8,7 +8,7 @@ from app.main import app
 
 def test_app_imports() -> None:
     """A app FastAPI carrega com os routers registrados sob /v1."""
-    assert app.title == "Evaluation Framework API"
+    assert app.title == "Evaluation Framework"
     # Usa o schema OpenAPI (estável entre versões do FastAPI) em vez de
     # inspecionar app.routes diretamente — a representação interna de rotas
     # incluídas varia entre versões.
