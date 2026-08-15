@@ -49,3 +49,15 @@ jobs:
         run: npm install
       - name: Build (tsc + vite)
         run: npm run build
+
+  docker-build:
+    # Sem isso, um Dockerfile quebrado (ex: package instalado vazio por
+    # ordem errada de COPY/RUN) só é descoberto rodando `docker compose up`
+    # manualmente — já aconteceu uma vez.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build backend image
+        run: docker build ./backend
+      - name: Build frontend image
+        run: docker build ./frontend

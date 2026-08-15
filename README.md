@@ -3,7 +3,8 @@
 Framework para avaliar modelos LLM: upload de datasets, execução de avaliações
 (judge determinístico e/ou LLM via myown-llm-gateway) e comparação de resultados.
 
-> **Status: SCAFFOLDING** — estrutura completa, sem lógica implementada.
+> **Status:** funcional (datasets, runs, judges e comparação implementados e
+> testados) — ainda não é production-ready, ver checklist abaixo.
 
 ## Stack
 
@@ -53,6 +54,13 @@ Para o backend rodando local (fora do compose), crie `backend/.env` a partir de
 | `GATEWAY_URL` | URL do myown-llm-gateway | `http://localhost:8000` |
 | `GATEWAY_API_KEY` | chave virtual do gateway | `sk-local` |
 | `JUDGE_MODEL` | modelo usado como judge | `deepseek/deepseek-chat` |
+| `API_KEY` | chave da própria API (header `X-API-Key`); vazio = auth desabilitada | _(vazio, dev)_ |
+| `RATE_LIMIT_PER_MINUTE` | requests/min por IP antes de 429 | `120` |
+| `RUN_CONCURRENCY` | samples processadas em paralelo por run | `5` |
+
+Se `API_KEY` estiver definida, defina também `VITE_API_KEY` (mesmo valor) para
+o frontend anexar o header `X-API-Key` nas chamadas — ver `.env.example` na
+raiz e `frontend/src/api.ts`.
 
 ## Endpoints (v1)
 
@@ -77,15 +85,35 @@ GET  /v1/results/compare?runs=id1,id2
 ## Checklist de produção
 
 🔴 **Blocking**
-- [ ] Migrations Alembic aplicadas (nada de `create_all` em produção)
+- [ ] Rodar `alembic upgrade head` no entrypoint do container em produção
+      (com `APP_ENV=production` o `create_all` de dev fica desligado — ver `main.py`)
+- [x] Migration de índices/unique constraint criada (`migrations/versions/20260815_*`)
+- [ ] `API_KEY` definida fora de código/repo (secret manager) — auth fica
+      desabilitada se não for setada
 - [ ] `GATEWAY_API_KEY` real fora de código/repo (secret manager)
-- [ ] Testes reais de API, judges e runner
+- [x] Testes reais de API, judges (incl. falha do LLM judge) e runner E2E
 
 🟡 **Importante**
-- [ ] CORS restrito à origem do frontend
-- [ ] Paginação em `GET /datasets` e `GET /evaluations`
-- [ ] Timeout/retry nas chamadas ao gateway (LLMJudge)
+- [x] CORS restrito à origem do frontend (métodos/headers também restritos)
+- [x] Auth por API key (`X-API-Key`) + rate limit por IP
+- [x] Judge LLM: falha vira `score=None` + motivo, nunca `0.0`
+- [x] Retry com backoff (429/5xx) nas chamadas ao gateway
+- [x] Processamento de samples concorrente (`RUN_CONCURRENCY`) + isolamento
+      de falha por sample (uma sample com erro não derruba a run inteira)
+- [x] Commit por sample (não mais um único commit no fim da run)
+- [x] Recovery de runs presas em `RUNNING` num restart (sweep no startup)
+- [x] `/health` verifica o banco; healthcheck do backend no compose
+- [x] Paginação em `GET /datasets` e `GET /evaluations`
+- [x] Índices nas FKs + `UNIQUE(run_id, sample_id)`
+- [x] Logs estruturados (JSON) + request-id por request
+- [x] Validação de tamanho de payload em `POST /datasets/{id}/samples`
+- [ ] Fila/worker de verdade (ex: arq) — hoje ainda é `BackgroundTasks`
+      in-process; a run não sobrevive a um `docker restart` (mas os
+      resultados já persistidos, sim — commit é por sample)
 
 🟢 **Nice-to-have**
-- [ ] Fila/worker (ex: arq ou celery) para runs longas
-- [ ] Logs estruturados (structlog) e métricas das runs
+- [ ] Métricas Prometheus + tracing (OTel) + alertas
+- [ ] Build estático do frontend (nginx) em vez do vite dev server no container
+- [ ] `ON DELETE CASCADE` + estratégia de backup do Postgres
+- [ ] Testes de frontend + eslint
+- [ ] CD (build/push de imagem no main)

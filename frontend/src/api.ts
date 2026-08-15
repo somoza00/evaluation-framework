@@ -63,9 +63,18 @@ export interface ComparePayload {
   runs: CompareEntry[]
 }
 
+// Anexa X-API-Key quando o backend exige auth (settings.API_KEY definida —
+// ver backend/app/core/security.py). Sem VITE_API_KEY, o header some e a
+// API funciona normalmente contanto que API_KEY não esteja setada no backend.
+const API_KEY = import.meta.env.VITE_API_KEY as string | undefined
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
-    headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) },
+    headers: {
+      'Content-Type': 'application/json',
+      ...(API_KEY ? { 'X-API-Key': API_KEY } : {}),
+      ...(init?.headers ?? {}),
+    },
     ...init,
   })
   if (!response.ok) {

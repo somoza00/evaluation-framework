@@ -2,8 +2,9 @@
 
 import uuid
 from datetime import datetime
+from typing import Annotated
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,6 +21,9 @@ from app.models.evaluation import (
 from app.services.runner import EvaluationRunner
 
 router = APIRouter(prefix="/evaluations", tags=["evaluations"])
+
+_DEFAULT_PAGE_SIZE = 50
+_MAX_PAGE_SIZE = 200
 
 
 class EvaluationCreate(BaseModel):
@@ -98,9 +102,11 @@ async def create_evaluation(
 
 @router.get("", response_model=list[RunResponse])
 async def list_evaluations(
+    limit: Annotated[int, Query(ge=1, le=_MAX_PAGE_SIZE)] = _DEFAULT_PAGE_SIZE,
+    offset: Annotated[int, Query(ge=0)] = 0,
     session: AsyncSession = Depends(get_session),
 ) -> list[RunResponse]:
-    """Lista todas as runs com progresso (results_count / samples_count)."""
+    """Lista runs com progresso (results_count / samples_count), paginado."""
     samples_sq = (
         select(func.count(Sample.id))
         .where(Sample.dataset_id == EvaluationRun.dataset_id)
@@ -120,6 +126,9 @@ async def list_evaluations(
                 samples_sq.label("samples_count"),
                 results_sq.label("results_count"),
             )
+            .order_by(EvaluationRun.created_at.desc())
+            .limit(limit)
+            .offset(offset)
         )
     ).all()
     return [

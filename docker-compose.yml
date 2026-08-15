@@ -32,6 +32,14 @@ services:
       JUDGE_MODEL: ${JUDGE_MODEL:-deepseek/deepseek-chat}
     ports:
       - "8001:8001"
+    healthcheck:
+      # A imagem já define HEALTHCHECK (ver backend/Dockerfile); repetido
+      # aqui só para deixar o intervalo explícito e óbvio no compose.
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:8001/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      start_period: 10s
+      retries: 5
     depends_on:
       db:
         condition: service_healthy
@@ -52,7 +60,8 @@ services:
     ports:
       - "5174:5174"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     networks:
       - eval-net
 
