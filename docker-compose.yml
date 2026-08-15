@@ -1,6 +1,7 @@
 services:
   db:
-    image: postgres:16
+    # Pinado por digest (não "postgres:16" flutuante) — ver .github/dependabot.yml.
+    image: postgres:16@sha256:11a9d238fbb48bab14599c57e41123254452b1a2d93c6c8595bce96f346bd082
     environment:
       POSTGRES_USER: eval
       POSTGRES_PASSWORD: eval
@@ -28,7 +29,10 @@ services:
       # environment sobrescreve o .env: dentro da rede, o banco é o serviço db.
       DATABASE_URL: postgresql+asyncpg://eval:eval@db:5432/evaluation
       GATEWAY_URL: http://host.docker.internal:8000
-      GATEWAY_API_KEY: ${GATEWAY_API_KEY:-sk-local}
+      # Sem default: um fallback silencioso (ex: "sk-local") sobe o
+      # container com uma chave placeholder sem avisar ninguém. Defina
+      # GATEWAY_API_KEY no .env (raiz) — ver .env.example.
+      GATEWAY_API_KEY: ${GATEWAY_API_KEY:?defina GATEWAY_API_KEY no .env (raiz) — ver .env.example}
       JUDGE_MODEL: ${JUDGE_MODEL:-deepseek/deepseek-chat}
     ports:
       - "8001:8001"

@@ -4,4 +4,6 @@
 # schema). Idempotente: "upgrade head" é no-op se o banco já está atualizado.
 set -e
 alembic upgrade head
-exec uvicorn app.main:app --host 0.0.0.0 --port 8001
+# --limit-concurrency: teto grosseiro de conexões simultâneas (não existe
+# flag de tamanho de body no uvicorn — isso é feito em app/core/body_limit.py).
+exec uvicorn app.main:app --host 0.0.0.0 --port 8001 --limit-concurrency 100

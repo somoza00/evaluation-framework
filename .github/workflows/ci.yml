@@ -58,6 +58,41 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Build backend image
-        run: docker build ./backend
+        run: docker build -t eval-backend:ci ./backend
       - name: Build frontend image
-        run: docker build ./frontend
+        run: docker build -t eval-frontend:ci ./frontend
+      - name: Scan backend image (Trivy)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: eval-backend:ci
+          severity: CRITICAL,HIGH
+          # Informativo por enquanto (CVE de imagem base costuma não ter fix
+          # imediato); promover pra exit-code 1 quando o time decidir gatear.
+          exit-code: "0"
+      - name: Scan frontend image (Trivy)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: eval-frontend:ci
+          severity: CRITICAL,HIGH
+          exit-code: "0"
+
+  dependency-audit:
+    # pip-audit checa CVE conhecida nas deps Python resolvidas — diferente
+    # do Trivy (que olha a imagem), isso é acionável na hora (só editar o
+    # range no pyproject.toml), então aqui sim quebra o build.
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+      - name: pip-audit
+        # --skip-editable: o próprio pacote local (instalado com pip install
+        # -e) não existe no PyPI pra ser auditado — sem isso, pip-audit trata
+        # isso como falha em vez de simplesmente pular o pacote local.
+        run: pip install "pip-audit>=2.7.0" "setuptools>=83.0.0" && pip-audit --skip-editable
