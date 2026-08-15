@@ -95,4 +95,4 @@ jobs:
         # --skip-editable: o próprio pacote local (instalado com pip install
         # -e) não existe no PyPI pra ser auditado — sem isso, pip-audit trata
         # isso como falha em vez de simplesmente pular o pacote local.
-        run: pip install pip-audit && pip-audit --skip-editable
+        run: pip install "pip-audit>=2.7.0" && pip-audit --skip-editable
