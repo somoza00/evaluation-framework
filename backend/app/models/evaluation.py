@@ -6,11 +6,12 @@ from datetime import datetime
 from typing import Any
 
 from sqlalchemy import Enum as SQLAlchemyEnum
-from sqlalchemy import ForeignKey, String, Text
+from sqlalchemy import ForeignKey, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
+from app.core.time import utcnow_naive
 
 
 class JudgeType(str, enum.Enum):
@@ -37,7 +38,7 @@ class EvaluationRun(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     dataset_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("datasets.id"), nullable=False
+        ForeignKey("datasets.id"), nullable=False, index=True
     )
     model: Mapped[str] = mapped_column(String(255), nullable=False)
     judge_type: Mapped[JudgeType] = mapped_column(
@@ -46,7 +47,7 @@ class EvaluationRun(Base):
     status: Mapped[RunStatus] = mapped_column(
         SQLAlchemyEnum(RunStatus), default=RunStatus.PENDING
     )
-    created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow_naive)
     finished_at: Mapped[datetime | None] = mapped_column(nullable=True)
 
     results: Mapped[list["EvaluationResult"]] = relationship(back_populates="run")
@@ -56,13 +57,18 @@ class EvaluationResult(Base):
     """Score por sample dentro de uma run (fidelity, coherence, instruction, overall)."""
 
     __tablename__ = "evaluation_results"
+    __table_args__ = (
+        # Sem isso, um retry/re-processamento da mesma sample grava um
+        # resultado duplicado em vez de substituir/rejeitar.
+        UniqueConstraint("run_id", "sample_id", name="uq_evaluation_results_run_sample"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     run_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("evaluation_runs.id"), nullable=False
+        ForeignKey("evaluation_runs.id"), nullable=False, index=True
     )
     sample_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("samples.id"), nullable=False
+        ForeignKey("samples.id"), nullable=False, index=True
     )
     actual_output: Mapped[str] = mapped_column(Text, nullable=False)
     # Mapped[float | None] sem mapped_column: coluna Float nullable inferida.

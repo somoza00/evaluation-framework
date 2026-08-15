@@ -2,10 +2,10 @@
 
 import uuid
 from datetime import datetime
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, ConfigDict
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -13,6 +13,13 @@ from app.core.database import get_session
 from app.models.dataset import Dataset, Sample
 
 router = APIRouter(prefix="/datasets", tags=["datasets"])
+
+# Sem limite, um POST /samples com lista gigante de textos grandes é DoS
+# trivial por memória (tudo é bufferizado antes do bulk insert).
+_MAX_SAMPLES_PER_REQUEST = 500
+_MAX_FIELD_LENGTH = 20_000
+_DEFAULT_PAGE_SIZE = 50
+_MAX_PAGE_SIZE = 200
 
 
 class DatasetCreate(BaseModel):
@@ -25,8 +32,8 @@ class DatasetCreate(BaseModel):
 class SampleCreate(BaseModel):
     """Item do body (lista) do POST /v1/datasets/{id}/samples."""
 
-    input: str
-    expected_output: str
+    input: str = Field(max_length=_MAX_FIELD_LENGTH)
+    expected_output: str = Field(max_length=_MAX_FIELD_LENGTH)
     metadata: dict[str, Any] = {}
 
 
@@ -63,7 +70,7 @@ async def create_dataset(
 @router.post("/{dataset_id}/samples", status_code=201)
 async def add_samples(
     dataset_id: uuid.UUID,
-    payload: list[SampleCreate],
+    payload: Annotated[list[SampleCreate], Body(max_length=_MAX_SAMPLES_PER_REQUEST)],
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     """Cria múltiplos Samples em bulk; retorna count e ids criados."""
@@ -87,14 +94,19 @@ async def add_samples(
 
 @router.get("", response_model=list[DatasetResponse])
 async def list_datasets(
+    limit: Annotated[int, Query(ge=1, le=_MAX_PAGE_SIZE)] = _DEFAULT_PAGE_SIZE,
+    offset: Annotated[int, Query(ge=0)] = 0,
     session: AsyncSession = Depends(get_session),
 ) -> list[DatasetResponse]:
-    """Lista todos os datasets com contagem de samples."""
+    """Lista datasets com contagem de samples (paginado: limit/offset)."""
     rows = (
         await session.execute(
             select(Dataset, func.count(Sample.id).label("samples_count"))
             .outerjoin(Sample, Sample.dataset_id == Dataset.id)
             .group_by(Dataset.id)
+            .order_by(Dataset.created_at.desc())
+            .limit(limit)
+            .offset(offset)
         )
     ).all()
     return [

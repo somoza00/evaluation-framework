@@ -10,6 +10,8 @@ from typing import Any
 
 import httpx
 
+from app.services.http_retry import post_with_retry
+
 _SCORE_RE = re.compile(r'"score"\s*:\s*(\d+)')
 _REASONING_RE = re.compile(r'"reasoning"\s*:\s*"([^"]+)"')
 
@@ -28,12 +30,14 @@ class LLMJudge:
         input_prompt: str,
         expected_output: str,
         actual_output: str,
-    ) -> dict[str, float | str]:
+    ) -> dict[str, float | str | None]:
         """Monta system prompt com rubrica e pede score_overall (1-5) + reasoning.
 
         Normaliza o score de 1-5 para 0.0-1.0 antes de retornar.
-        Erros de HTTP/parse são tratados graciosamente: retorna score 0.0
-        com a descrição do erro em judge_reasoning.
+        Erros de HTTP/parse são tratados graciosamente: retorna score_overall=None
+        (falha do judge, NUNCA 0.0 — 0.0 é uma nota legítima e corromperia médias)
+        com a descrição do erro em judge_reasoning. Tenta algumas vezes com
+        backoff antes de desistir (ver _post_with_retry).
         """
         system_prompt = (
             "Você é um juiz de avaliação de respostas de modelos de linguagem. "
@@ -49,10 +53,11 @@ class LLMJudge:
             f"Resposta do modelo: {actual_output}"
         )
         try:
-            response = await self.client.post(
+            response = await post_with_retry(
+                self.client,
                 "/v1/chat/completions",
                 headers={"Authorization": f"Bearer {self.api_key}"},
-                json={
+                json_body={
                     "model": self.model,
                     "messages": [
                         {"role": "system", "content": system_prompt},
@@ -61,12 +66,11 @@ class LLMJudge:
                     "temperature": 0.0,
                 },
             )
-            response.raise_for_status()
             content: Any = response.json()["choices"][0]["message"]["content"]
             score, reasoning = self._parse_score(str(content))
             return {"score_overall": (score - 1) / 4, "judge_reasoning": reasoning}
         except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError) as exc:
-            return {"score_overall": 0.0, "judge_reasoning": f"erro ao avaliar via LLM: {exc}"}
+            return {"score_overall": None, "judge_reasoning": f"erro ao avaliar via LLM: {exc}"}
 
     def _parse_score(self, content: str) -> tuple[int, str]:
         """Extrai score (1-5) e reasoning do JSON retornado pelo modelo.
