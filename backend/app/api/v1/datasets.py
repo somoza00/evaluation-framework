@@ -25,8 +25,8 @@ _MAX_PAGE_SIZE = 200
 class DatasetCreate(BaseModel):
     """Body do POST /v1/datasets."""
 
-    name: str
-    description: str = ""
+    name: str = Field(max_length=255)
+    description: str = Field(default="", max_length=5_000)
 
 
 class SampleCreate(BaseModel):

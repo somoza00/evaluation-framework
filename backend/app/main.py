@@ -1,5 +1,7 @@
 """Entrypoint da aplicação FastAPI do evaluation-framework."""
 
+import logging
+
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text, update
@@ -7,6 +9,7 @@ from sqlalchemy import text, update
 from app.api.v1.datasets import router as datasets_router
 from app.api.v1.evaluations import router as evaluations_router
 from app.api.v1.results import router as results_router
+from app.core.body_limit import MaxBodySizeMiddleware
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal, Base, engine
 from app.core.logging import RequestContextMiddleware, configure_logging
@@ -14,13 +17,23 @@ from app.core.security import rate_limit, require_api_key
 from app.models.evaluation import EvaluationRun, RunStatus
 
 configure_logging()
+logger = logging.getLogger("app")
+
+_is_production = settings.APP_ENV == "production"
 
 app = FastAPI(
     title="Evaluation Framework",
     version="0.1.0",
     description="LLM response quality evaluation framework",
+    # /docs e /openapi.json expõem o shape completo da API (facilita
+    # reconhecimento por um atacante); sem valor em produção, onde não há
+    # usuário navegando o Swagger UI manualmente.
+    docs_url=None if _is_production else "/docs",
+    redoc_url=None if _is_production else "/redoc",
+    openapi_url=None if _is_production else "/openapi.json",
 )
 
+app.add_middleware(MaxBodySizeMiddleware, max_bytes=settings.MAX_REQUEST_BODY_BYTES)
 app.add_middleware(RequestContextMiddleware)
 
 app.add_middleware(
@@ -45,13 +58,17 @@ async def health() -> dict[str, str]:
     """Health check real: falha (503) se o banco não responder.
 
     Antes retornava {"status": "ok"} sem tocar no banco — um Postgres
-    morto ainda passava no healthcheck do orquestrador.
+    morto ainda passava no healthcheck do orquestrador. O detalhe da
+    exceção vai só pro log em produção — devolver o texto cru pra um
+    prober anônimo vaza detalhe interno (driver, host) sem necessidade.
     """
     try:
         async with engine.connect() as conn:
             await conn.execute(text("SELECT 1"))
     except Exception as exc:
-        raise HTTPException(status_code=503, detail=f"banco indisponível: {exc}") from exc
+        logger.error("health check failed: %s", exc)
+        detail = "banco indisponível" if _is_production else f"banco indisponível: {exc}"
+        raise HTTPException(status_code=503, detail=detail) from exc
     return {"status": "ok"}
 
 

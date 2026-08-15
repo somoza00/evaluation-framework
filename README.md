@@ -57,10 +57,27 @@ Para o backend rodando local (fora do compose), crie `backend/.env` a partir de
 | `API_KEY` | chave da própria API (header `X-API-Key`); vazio = auth desabilitada | _(vazio, dev)_ |
 | `RATE_LIMIT_PER_MINUTE` | requests/min por IP antes de 429 | `120` |
 | `RUN_CONCURRENCY` | samples processadas em paralelo por run | `5` |
+| `TRUST_PROXY_HEADERS` | usa `X-Forwarded-For` (em vez do IP da conexão TCP) no rate limit — só ative atrás de um proxy confiável | `false` |
+| `MAX_REQUEST_BODY_BYTES` | corpo de request além disso leva 413 antes de ser lido | `25000000` |
 
 Se `API_KEY` estiver definida, defina também `VITE_API_KEY` (mesmo valor) para
 o frontend anexar o header `X-API-Key` nas chamadas — ver `.env.example` na
 raiz e `frontend/src/api.ts`.
+
+Com `APP_ENV=production`, o processo **recusa subir sem `API_KEY`** (fail-closed
+— ver `Settings` em `app/core/config.py`); `/docs`, `/redoc` e `/openapi.json`
+também ficam desabilitados nesse modo.
+
+### Threat model do `X-API-Key` (leia antes de confiar demais nisso)
+
+`API_KEY`/`VITE_API_KEY` é um token de capacidade compartilhado, embutido no
+bundle JS do frontend — qualquer um que abra o DevTools no navegador de quem
+acessa o frontend consegue ler a chave. Isso é aceitável para uma ferramenta
+interna atrás de rede confiável (VPN, rede interna), mas **não** é autenticação
+de usuário: não há como revogar o acesso de uma pessoa específica, nem
+distinguir quem fez uma run. Para expor isto publicamente ou multi-tenant,
+é necessário login de verdade (sessão/cookie) antes de continuar usando
+`X-API-Key` só para service-to-service.
 
 ## Endpoints (v1)
 
@@ -88,28 +105,39 @@ GET  /v1/results/compare?runs=id1,id2
 - [ ] Rodar `alembic upgrade head` no entrypoint do container em produção
       (com `APP_ENV=production` o `create_all` de dev fica desligado — ver `main.py`)
 - [x] Migration de índices/unique constraint criada (`migrations/versions/20260815_*`)
-- [ ] `API_KEY` definida fora de código/repo (secret manager) — auth fica
-      desabilitada se não for setada
-- [ ] `GATEWAY_API_KEY` real fora de código/repo (secret manager)
+- [x] `API_KEY` obrigatória em produção — o processo recusa subir sem ela
+      (`APP_ENV=production` + `Settings`, fail-closed)
+- [x] `GATEWAY_API_KEY` sem fallback silencioso no compose (`${VAR:?...}`)
 - [x] Testes reais de API, judges (incl. falha do LLM judge) e runner E2E
 
 🟡 **Importante**
 - [x] CORS restrito à origem do frontend (métodos/headers também restritos)
-- [x] Auth por API key (`X-API-Key`) + rate limit por IP
+- [x] Auth por API key (`X-API-Key`, comparação em tempo constante) + rate
+      limit por IP (com suporte opcional a `X-Forwarded-For` atrás de proxy)
 - [x] Judge LLM: falha vira `score=None` + motivo, nunca `0.0`
 - [x] Retry com backoff (429/5xx) nas chamadas ao gateway
 - [x] Processamento de samples concorrente (`RUN_CONCURRENCY`) + isolamento
       de falha por sample (uma sample com erro não derruba a run inteira)
 - [x] Commit por sample (não mais um único commit no fim da run)
 - [x] Recovery de runs presas em `RUNNING` num restart (sweep no startup)
-- [x] `/health` verifica o banco; healthcheck do backend no compose
+- [x] `/health` verifica o banco (sem vazar detalhe de exceção em produção);
+      healthcheck do backend no compose
 - [x] Paginação em `GET /datasets` e `GET /evaluations`
 - [x] Índices nas FKs + `UNIQUE(run_id, sample_id)`
-- [x] Logs estruturados (JSON) + request-id por request
-- [x] Validação de tamanho de payload em `POST /datasets/{id}/samples`
+- [x] Logs estruturados (JSON) + request-id por request; eventos de auth
+      (401/429) num logger dedicado (`app.security`)
+- [x] Validação de tamanho de payload (por campo, por request via
+      `MaxBodySizeMiddleware`, e por nº de samples)
+- [x] `/docs`, `/redoc`, `/openapi.json` desabilitados em produção
+- [x] Imagens Docker pinadas por digest + container roda non-root + CI
+      builda e escaneia (Trivy) as imagens
+- [x] `pip-audit` no CI + Dependabot (pip/npm/docker/actions)
 - [ ] Fila/worker de verdade (ex: arq) — hoje ainda é `BackgroundTasks`
       in-process; a run não sobrevive a um `docker restart` (mas os
       resultados já persistidos, sim — commit é por sample)
+- [ ] Rate limit compartilhado (Redis) — o atual é em memória por processo:
+      reinicia com o processo e não é compartilhado entre workers/réplicas.
+      Só vale a pena quando o deploy real tiver mais de 1 worker.
 
 🟢 **Nice-to-have**
 - [ ] Métricas Prometheus + tracing (OTel) + alertas
@@ -117,3 +145,7 @@ GET  /v1/results/compare?runs=id1,id2
 - [ ] `ON DELETE CASCADE` + estratégia de backup do Postgres
 - [ ] Testes de frontend + eslint
 - [ ] CD (build/push de imagem no main)
+- [ ] Lockfile de dependências Python (pip-tools/uv) — hoje `pyproject.toml`
+      usa ranges (`>=`); build não é 100% reprodutível
+- [ ] Autenticação de usuário de verdade (sessão/cookie) em vez de uma
+      API key compartilhada — ver "Threat model" acima

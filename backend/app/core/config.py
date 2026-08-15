@@ -1,6 +1,6 @@
 """Configuração central da aplicação via pydantic-settings."""
 
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -30,6 +30,16 @@ class Settings(BaseSettings):
     # Samples processadas em paralelo por run (chamadas ao gateway são
     # I/O-bound; processamento serial era o gargalo de performance).
     RUN_CONCURRENCY: int = 5
+    # Confia no header X-Forwarded-For para extrair o IP real do cliente no
+    # rate limit. Só ative se a API estiver de fato atrás de um proxy que
+    # SEMPRE sobrescreve esse header (Traefik/nginx) — sem isso, um cliente
+    # direto pode forjar o header e furar o rate limit por IP.
+    TRUST_PROXY_HEADERS: bool = False
+    # Corpo de request além disso é rejeitado (413) antes de ser lido por
+    # completo — Pydantic só valida depois do body inteiro bufferizado, o
+    # que por si só não impede o consumo de memória. Default folgado o
+    # bastante para o maior POST /samples legítimo (500 samples x ~40KB).
+    MAX_REQUEST_BODY_BYTES: int = 25_000_000
 
     @field_validator("API_KEY", mode="before")
     @classmethod
@@ -37,6 +47,17 @@ class Settings(BaseSettings):
         """`API_KEY=` vazio no .env deve significar "auth desabilitada", não
         uma chave literal de string vazia (que bloquearia toda a API)."""
         return value or None
+
+    @model_validator(mode="after")
+    def _api_key_required_in_production(self) -> "Settings":
+        """Fail-closed: em produção, subir sem API_KEY é um deploy aberto por
+        acidente — melhor o processo nem iniciar do que servir sem auth."""
+        if self.APP_ENV == "production" and self.API_KEY is None:
+            raise ValueError(
+                "APP_ENV=production exige API_KEY definida "
+                "(auth da API não pode ficar desabilitada em produção)"
+            )
+        return self
 
 
 settings = Settings()  # type: ignore[call-arg]  # campos obrigatórios vêm do ambiente/.env, não de kwargs
