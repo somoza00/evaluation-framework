@@ -37,10 +37,15 @@ jobs:
           source: ./backend
           # Dockerfile já existente builda a imagem (mesma usada localmente
           # via docker-compose) — o Cloud Run detecta e usa direto.
-          flags: --port=8001 --allow-unauthenticated
           # A "autenticação" real é a nossa X-API-Key (app/core/security.py);
           # IAM do Cloud Run aqui seria redundante e bloquearia o frontend
           # público de chamar a API diretamente do navegador.
+          # --no-cpu-throttling: o runner de avaliação roda via BackgroundTasks
+          # (main.py) DEPOIS da resposta HTTP ser enviada; sem essa flag o
+          # Cloud Run reduz a CPU da instância assim que a resposta sai, e a
+          # avaliação em background pode travar. --max-instances é o teto de
+          # custo: mesmo se viralizar, nunca sobe mais que N instâncias.
+          flags: --port=8001 --allow-unauthenticated --no-cpu-throttling --max-instances=4
           # Só credencial de verdade vai pro Secret Manager (contém senha/
           # chave). GATEWAY_URL, JUDGE_MODEL e CORS_ORIGINS são config, não
           # segredo — variáveis de repo (Settings > Secrets and variables >
