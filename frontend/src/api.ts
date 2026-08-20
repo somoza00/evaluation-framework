@@ -1,5 +1,8 @@
 // Tipos das respostas da API + helpers fetch (fetch nativo, sem axios).
-// Base relativa: o vite dev server faz proxy de /v1 para o backend (:8001).
+// Base relativa (dev): o vite dev server faz proxy de /v1 para o backend
+// (:8001). Em produção, frontend e backend são domínios diferentes (Cloudflare
+// Pages x Cloud Run) — sem VITE_API_BASE_URL, as chamadas iriam para o
+// próprio domínio do frontend, que não tem backend.
 
 export interface DatasetResponse {
   id: string
@@ -68,8 +71,12 @@ export interface ComparePayload {
 // API funciona normalmente contanto que API_KEY não esteja setada no backend.
 const API_KEY = import.meta.env.VITE_API_KEY as string | undefined
 
+// Vazio por padrão = caminho relativo (dev, proxy do vite). Em produção o
+// build do CD injeta a URL pública do backend (ver .github/workflows/cd.yml).
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? ''
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(path, {
+  const response = await fetch(`${API_BASE_URL}${path}`, {
     headers: {
       'Content-Type': 'application/json',
       ...(API_KEY ? { 'X-API-Key': API_KEY } : {}),
