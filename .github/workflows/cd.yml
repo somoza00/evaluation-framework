@@ -1,0 +1,91 @@
+name: CD
+
+# Dispara quando a workflow "CI" termina com sucesso na main — não em todo
+# push, pra garantir que só vai pra produção o que passou em lint/types/
+# testes/scan (ver .github/workflows/ci.yml). workflow_run só roda a partir
+# da versão do workflow que já está na branch padrão, então este arquivo
+# só passa a funcionar depois de mergeado em main.
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+
+jobs:
+  deploy-backend:
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # necessário pro Workload Identity Federation (sem chave JSON estática)
+    outputs:
+      url: ${{ steps.deploy.outputs.url }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+      - id: auth
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDP_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
+      - id: deploy
+        uses: google-github-actions/deploy-cloudrun@2028e2d7d30a78c6910e0632e48dd561b064884d # v3
+        with:
+          service: eval-framework-backend
+          region: ${{ vars.GCP_REGION }}
+          source: ./backend
+          # Dockerfile já existente builda a imagem (mesma usada localmente
+          # via docker-compose) — o Cloud Run detecta e usa direto.
+          flags: --port=8001 --allow-unauthenticated
+          # A "autenticação" real é a nossa X-API-Key (app/core/security.py);
+          # IAM do Cloud Run aqui seria redundante e bloquearia o frontend
+          # público de chamar a API diretamente do navegador.
+          # Só credencial de verdade vai pro Secret Manager (contém senha/
+          # chave). GATEWAY_URL, JUDGE_MODEL e CORS_ORIGINS são config, não
+          # segredo — variáveis de repo (Settings > Secrets and variables >
+          # Actions > Variables) bastam.
+          secrets: |
+            DATABASE_URL=database-url:latest
+            GATEWAY_API_KEY=gateway-api-key:latest
+            API_KEY=api-key:latest
+          env_vars: |-
+            APP_ENV=production
+            GATEWAY_URL=${{ vars.GATEWAY_URL }}
+            JUDGE_MODEL=${{ vars.JUDGE_MODEL }}
+            CORS_ORIGINS=${{ vars.CORS_ORIGINS_PROD }}
+
+  deploy-frontend:
+    needs: deploy-backend
+    # Gate duplo: só deploya o front se a CI passou E o backend subiu. Sem o
+    # needs.result, o `if` explícito faria este job rodar mesmo com o backend
+    # falho — e needs.deploy-backend.outputs.url viria vazio, build apontando
+    # pro nada.
+    if: github.event.workflow_run.conclusion == 'success' && needs.deploy-backend.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Install dependencies
+        run: npm ci
+      - name: Build (URL do backend injetada em tempo de build)
+        run: npm run build
+        env:
+          VITE_API_BASE_URL: ${{ needs.deploy-backend.outputs.url }}
+          VITE_API_KEY: ${{ secrets.PROD_API_KEY }}
+      - name: Deploy (Cloudflare Pages)
+        uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0 # v4.0.0
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy dist --project-name=${{ vars.CLOUDFLARE_PROJECT_NAME }}
+          workingDirectory: frontend
