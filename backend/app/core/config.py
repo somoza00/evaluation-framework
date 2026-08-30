@@ -30,6 +30,10 @@ class Settings(BaseSettings):
     # Samples processadas em paralelo por run (chamadas ao gateway são
     # I/O-bound; processamento serial era o gargalo de performance).
     RUN_CONCURRENCY: int = 5
+    # No startup, runs presas em RUNNING só são marcadas como FAILED se
+    # mais antigas que isto (segundos). Evita que um deploy rolling marque
+    # como falha uma run ainda ativa na instância anterior.
+    ORPHANED_RUN_MAX_AGE_SECONDS: int = 300
     # Confia no header X-Forwarded-For para extrair o IP real do cliente no
     # rate limit. Só ative se a API estiver de fato atrás de um proxy que
     # SEMPRE sobrescreve esse header (Traefik/nginx) — sem isso, um cliente

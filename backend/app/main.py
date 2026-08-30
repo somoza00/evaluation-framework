@@ -1,10 +1,12 @@
 """Entrypoint da aplicação FastAPI do evaluation-framework."""
 
 import logging
+from datetime import timedelta
 
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text, update
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.datasets import router as datasets_router
 from app.api.v1.evaluations import router as evaluations_router
@@ -14,6 +16,7 @@ from app.core.config import settings
 from app.core.database import AsyncSessionLocal, Base, engine
 from app.core.logging import RequestContextMiddleware, configure_logging
 from app.core.security import rate_limit, require_api_key
+from app.core.time import utcnow_naive
 from app.models.evaluation import EvaluationRun, RunStatus
 
 configure_logging()
@@ -72,21 +75,27 @@ async def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-async def _recover_orphaned_runs() -> None:
+async def _recover_orphaned_runs(session: AsyncSession) -> None:
     """Marca como FAILED runs presas em RUNNING num restart do processo.
 
     O runner roda via BackgroundTasks in-process: se o processo morre no
     meio de uma run, ela fica presa em RUNNING para sempre (nada nunca
     mais atualiza o status). Resultados já persistidos (commit por sample,
     ver runner.py) não são perdidos — só a run é marcada como falha.
+
+    A janela de idade (`ORPHANED_RUN_MAX_AGE_SECONDS`) preserva runs
+    recém-criadas: num deploy rolling, a instância nova não deve marcar
+    como FAILED uma run ainda ativa na instância antiga. É um heurístico,
+    não um lease — sem heartbeat/dono na linha, a corrida não some.
     """
-    async with AsyncSessionLocal() as session:
-        await session.execute(
-            update(EvaluationRun)
-            .where(EvaluationRun.status == RunStatus.RUNNING)
-            .values(status=RunStatus.FAILED)
-        )
-        await session.commit()
+    cutoff = utcnow_naive() - timedelta(seconds=settings.ORPHANED_RUN_MAX_AGE_SECONDS)
+    await session.execute(
+        update(EvaluationRun)
+        .where(EvaluationRun.status == RunStatus.RUNNING)
+        .where(EvaluationRun.created_at < cutoff)
+        .values(status=RunStatus.FAILED)
+    )
+    await session.commit()
 
 
 @app.on_event("startup")
@@ -99,4 +108,5 @@ async def startup() -> None:
     if settings.APP_ENV != "production":
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
-    await _recover_orphaned_runs()
+    async with AsyncSessionLocal() as session:
+        await _recover_orphaned_runs(session)
