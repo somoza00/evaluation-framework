@@ -31,7 +31,9 @@ class EvaluationRunner:
         self.det_judge = DeterministicJudge()
         self.llm_judge = LLMJudge(
             gateway_url=settings.GATEWAY_URL,
-            api_key=settings.GATEWAY_API_KEY,
+            # O judge usa JUDGE_API_KEY (se definida) para não dividir o
+            # rate-limit do gateway com o modelo avaliado (GATEWAY_API_KEY).
+            api_key=settings.JUDGE_API_KEY or settings.GATEWAY_API_KEY,
             model=settings.JUDGE_MODEL,
         )
 

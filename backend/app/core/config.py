@@ -16,6 +16,11 @@ class Settings(BaseSettings):
     DATABASE_URL: str
     GATEWAY_URL: str
     GATEWAY_API_KEY: str
+    # Chave virtual do gateway usada pelo judge (pontuação). Separada de
+    # GATEWAY_API_KEY (modelo avaliado) para o rate-limit do gateway não ser
+    # dividido entre modelo e judge numa mesma run. Vazio = usa a mesma de
+    # GATEWAY_API_KEY (compatibilidade com deploy existente).
+    JUDGE_API_KEY: str | None = None
     JUDGE_MODEL: str = "deepseek/deepseek-chat"
     APP_ENV: str = "development"
     CORS_ORIGINS: list[str] = ["http://localhost:5174"]
