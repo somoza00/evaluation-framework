@@ -1,5 +1,7 @@
 """Testes do helper de retry com backoff usado pelas chamadas ao gateway."""
 
+import logging
+
 import httpx
 import pytest
 
@@ -55,3 +57,22 @@ async def test_does_not_retry_non_retryable_client_error() -> None:
         with pytest.raises(httpx.HTTPStatusError):
             await post_with_retry(client, "/x", headers={}, json_body={}, base_delay=0.001)
     assert calls["n"] == 1
+
+
+async def test_logs_warning_on_retry(caplog: pytest.LogCaptureFixture) -> None:
+    """Cada tentativa de retry deve gerar um log de aviso (observabilidade)."""
+    calls = {"n": 0}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return httpx.Response(429)
+        return httpx.Response(200, json={"ok": True})
+
+    with caplog.at_level(logging.WARNING, logger="app.services.http_retry"):
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(handler), base_url="http://test"
+        ) as client:
+            await post_with_retry(client, "/x", headers={}, json_body={}, base_delay=0.001)
+
+    assert any("http retry" in r.message for r in caplog.records)

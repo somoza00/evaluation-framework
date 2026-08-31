@@ -8,8 +8,11 @@ sentido re-tentar um 400/401.
 """
 
 import asyncio
+import logging
 
 import httpx
+
+logger = logging.getLogger(__name__)
 
 _RETRYABLE_STATUS = {429, 500, 502, 503, 504}
 
@@ -39,7 +42,15 @@ async def post_with_retry(
             )
 
         if attempt < attempts - 1:
-            await asyncio.sleep(base_delay * (2**attempt))
+            backoff = base_delay * (2**attempt)
+            logger.warning(
+                "http retry %d/%d em %.2fs (ultima falha: %s)",
+                attempt + 1,
+                attempts,
+                backoff,
+                last_exc,
+            )
+            await asyncio.sleep(backoff)
 
     assert last_exc is not None
     raise last_exc
