@@ -5,6 +5,8 @@ e o caminho PENDING -> RUNNING -> DONE nunca era percorrido de verdade.
 """
 
 import json
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
@@ -15,6 +17,18 @@ from app.core.config import settings
 from app.models.dataset import Dataset, Sample
 from app.models.evaluation import EvaluationResult, EvaluationRun, JudgeType, RunStatus
 from app.services.runner import EvaluationRunner
+
+
+def _fake_settings(**overrides: object) -> SimpleNamespace:
+    """Settings mínimo só para o __init__ do runner (não usa banco)."""
+    base: dict[str, object] = {
+        "GATEWAY_URL": "http://gateway",
+        "GATEWAY_API_KEY": "model-key",
+        "JUDGE_API_KEY": None,
+        "JUDGE_MODEL": "judge",
+    }
+    base.update(overrides)
+    return SimpleNamespace(**base)
 
 
 @pytest.fixture(autouse=True)
@@ -135,3 +149,25 @@ async def test_run_llm_judge_failure_records_none_score(db_session: AsyncSession
     assert len(results) == 1
     assert results[0].score_overall is None
     assert "erro ao avaliar via LLM" in (results[0].judge_reasoning or "")
+
+
+async def test_judge_uses_separate_key_when_configured() -> None:
+    """Com JUDGE_API_KEY definida, o judge usa a própria chave (não a do modelo)."""
+    runner = EvaluationRunner(
+        session=AsyncMock(), settings=_fake_settings(JUDGE_API_KEY="judge-key")  # type: ignore[arg-type]
+    )
+    try:
+        assert runner.llm_judge.api_key == "judge-key"
+    finally:
+        await runner.close()
+
+
+async def test_judge_falls_back_to_model_key_when_unset() -> None:
+    """Sem JUDGE_API_KEY, o judge usa a mesma de GATEWAY_API_KEY (retrocompat)."""
+    runner = EvaluationRunner(
+        session=AsyncMock(), settings=_fake_settings(JUDGE_API_KEY=None)  # type: ignore[arg-type]
+    )
+    try:
+        assert runner.llm_judge.api_key == "model-key"
+    finally:
+        await runner.close()
