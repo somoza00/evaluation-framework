@@ -1,6 +1,8 @@
 """Entrypoint da aplicação FastAPI do evaluation-framework."""
 
 import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import timedelta
 
 from fastapi import Depends, FastAPI, HTTPException
@@ -24,7 +26,24 @@ logger = logging.getLogger("app")
 
 _is_production = settings.APP_ENV == "production"
 
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    """Cria tabelas em dev (create_all) e recupera runs órfãs.
+
+    Em produção o schema deve vir do `alembic upgrade head` no entrypoint
+    do container, não do create_all (ver Dockerfile).
+    """
+    if settings.APP_ENV != "production":
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+    async with AsyncSessionLocal() as session:
+        await _recover_orphaned_runs(session)
+    yield
+
+
 app = FastAPI(
+    lifespan=lifespan,
     title="Evaluation Framework",
     version="0.1.0",
     description="LLM response quality evaluation framework",
@@ -96,17 +115,3 @@ async def _recover_orphaned_runs(session: AsyncSession) -> None:
         .values(status=RunStatus.FAILED)
     )
     await session.commit()
-
-
-@app.on_event("startup")
-async def startup() -> None:
-    """Cria tabelas em dev (create_all) e recupera runs órfãs em qualquer ambiente.
-
-    Em produção o schema deve vir do `alembic upgrade head` no entrypoint
-    do container, não do create_all (ver Dockerfile).
-    """
-    if settings.APP_ENV != "production":
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-    async with AsyncSessionLocal() as session:
-        await _recover_orphaned_runs(session)
