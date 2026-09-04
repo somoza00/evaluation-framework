@@ -76,3 +76,29 @@ async def test_logs_warning_on_retry(caplog: pytest.LogCaptureFixture) -> None:
             await post_with_retry(client, "/x", headers={}, json_body={}, base_delay=0.001)
 
     assert any("http retry" in r.message for r in caplog.records)
+
+
+async def test_retry_respects_upstream_retry_after(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Com Retry-After no 429, o próximo retry espera pelo menos esse tempo."""
+    sleeps: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+
+    monkeypatch.setattr("app.services.http_retry.asyncio.sleep", fake_sleep)
+    calls = {"n": 0}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return httpx.Response(429, headers={"Retry-After": "5"})
+        return httpx.Response(200, json={"ok": True})
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), base_url="http://test"
+    ) as client:
+        await post_with_retry(client, "/x", headers={}, json_body={}, base_delay=0.1)
+
+    assert sleeps and max(sleeps) >= 5.0
