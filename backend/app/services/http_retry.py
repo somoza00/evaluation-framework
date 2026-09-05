@@ -9,6 +9,8 @@ sentido re-tentar um 400/401.
 
 import asyncio
 import logging
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 
 import httpx
 
@@ -17,15 +19,25 @@ logger = logging.getLogger(__name__)
 _RETRYABLE_STATUS = {429, 500, 502, 503, 504}
 
 
-def _parse_retry_after(response: httpx.Response) -> float:
-    """Retry-After em segundos (forma numérica) do upstream; 0 se ausente/não-numérico."""
+def _parse_retry_after(
+    response: httpx.Response, *, now: datetime | None = None
+) -> float:
+    """Retry-After em segundos do upstream (numérico OU HTTP-date); 0 se inválido/ausente."""
     value = response.headers.get("retry-after")
     if not value:
         return 0.0
     try:
         return max(0.0, float(value))
     except ValueError:
-        return 0.0  # HTTP-date (raro): ignora e usa o backoff comum
+        pass
+    try:
+        retry_at = parsedate_to_datetime(value)
+        if retry_at.tzinfo is None:
+            retry_at = retry_at.replace(tzinfo=UTC)
+        ref = now if now is not None else datetime.now(UTC)
+        return max(0.0, (retry_at - ref).total_seconds())
+    except (TypeError, ValueError):
+        return 0.0
 
 
 async def post_with_retry(
