@@ -102,3 +102,14 @@ async def test_retry_respects_upstream_retry_after(
         await post_with_retry(client, "/x", headers={}, json_body={}, base_delay=0.1)
 
     assert sleeps and max(sleeps) >= 5.0
+
+
+async def test_parse_retry_after_supports_http_date() -> None:
+    """Retry-After em forma de data HTTP também é convertido para segundos."""
+    from datetime import UTC, datetime
+
+    from app.services.http_retry import _parse_retry_after
+
+    resp = httpx.Response(429, headers={"Retry-After": "Wed, 21 Oct 2026 07:28:00 GMT"})
+    now = datetime(2026, 10, 21, 7, 27, 0, tzinfo=UTC)
+    assert _parse_retry_after(resp, now=now) == 60.0
