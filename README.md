@@ -43,14 +43,14 @@ docker compose up --build
 - Backend API: http://localhost:8001 (docs em /docs)
 - Postgres: `localhost:5433` no host (`db:5432` na rede interna)
 
-Para o backend rodando local (fora do compose), crie `backend/.env` a partir de
-`backend/.env.example` — **nunca commitar `.env`**.
+Para o backend rodando local (fora do compose), crie `backend/.env` a partir do
+`.env.example` da raiz — **nunca commitar `.env`**.
 
 ## Variáveis de ambiente (backend)
 
 | Variável | Descrição | Default (dev) |
 |---|---|---|
-| `DATABASE_URL` | connection string asyncpg | `postgresql+asyncpg://eval:eval@localhost:5432/evaluation` |
+| `DATABASE_URL` | connection string asyncpg | `postgresql+asyncpg://eval:eval@localhost:5433/evaluation` (porta 5433 é a publicada pelo compose no host) |
 | `GATEWAY_URL` | URL do myown-llm-gateway | `http://localhost:8000` |
 | `GATEWAY_API_KEY` | chave virtual do gateway | `sk-local` |
 | `JUDGE_MODEL` | modelo usado como judge | `deepseek/deepseek-chat` |
