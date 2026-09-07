@@ -47,7 +47,7 @@ jobs:
           # vite 8 exige node ^20.19 || >=22.12; 24 é LTS atual — cobre com folga.
           node-version: 24
       - name: Install dependencies
-        run: npm install
+        run: npm ci
       - name: Build (tsc + vite)
         run: npm run build
 
