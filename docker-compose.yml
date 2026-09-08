@@ -1,5 +1,8 @@
 services:
   db:
+    # Sobe sozinho depois de um crash ou reboot do Docker (produção): sem
+    # restart explícito, um container que cai deixa o stack parado.
+    restart: unless-stopped
     # Pinado por digest (não "postgres:16" flutuante) — ver .github/dependabot.yml.
     image: postgres:16@sha256:11a9d238fbb48bab14599c57e41123254452b1a2d93c6c8595bce96f346bd082
     environment:
@@ -20,6 +23,7 @@ services:
       - eval-net
 
   backend:
+    restart: unless-stopped
     build: ./backend
     env_file:
       # Obrigatório no compose 2.24+; sobe com defaults se o .env não existir.
@@ -54,6 +58,7 @@ services:
       - eval-net
 
   frontend:
+    restart: unless-stopped
     build: ./frontend
     env_file:
       - path: .env
