@@ -54,11 +54,15 @@ Para o backend rodando local (fora do compose), crie `backend/.env` a partir do
 | `GATEWAY_URL` | URL do myown-llm-gateway | `http://localhost:8000` |
 | `GATEWAY_API_KEY` | chave virtual do gateway | `sk-local` |
 | `JUDGE_MODEL` | modelo usado como judge | `deepseek/deepseek-chat` |
+| `JUDGE_API_KEY` | chave virtual do gateway usada pelo judge; vazio = usa a mesma de `GATEWAY_API_KEY` | _(vazio, dev)_ |
+| `APP_ENV` | ambiente (`development`/`production`); em `production` exige `API_KEY` (fail-closed) | `development` |
+| `CORS_ORIGINS` | origens permitidas no CORS (JSON) | `["http://localhost:5174"]` |
 | `API_KEY` | chave da própria API (header `X-API-Key`); vazio = auth desabilitada | _(vazio, dev)_ |
 | `RATE_LIMIT_PER_MINUTE` | requests/min por IP antes de 429 | `120` |
 | `RUN_CONCURRENCY` | samples processadas em paralelo por run | `5` |
 | `TRUST_PROXY_HEADERS` | usa `X-Forwarded-For` (em vez do IP da conexão TCP) no rate limit — só ative atrás de um proxy confiável | `false` |
 | `MAX_REQUEST_BODY_BYTES` | corpo de request além disso leva 413 antes de ser lido | `25000000` |
+| `ORPHANED_RUN_MAX_AGE_SECONDS` | idade mínima pra run presa em `RUNNING` ser marcada `FAILED` no startup | `300` |
 
 Se `API_KEY` estiver definida, defina também `VITE_API_KEY` (mesmo valor) para
 o frontend anexar o header `X-API-Key` nas chamadas — ver `.env.example` na
