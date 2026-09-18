@@ -106,6 +106,14 @@ GET  /v1/results/compare?runs=id1,id2
 ## Desenvolvimento (Makefile)
 O repo tem um `Makefile` que espelha o CI: `make config` (valida o compose), `make venv` (cria o `.venv` do backend), `make lint` (ruff+mypy), `make test` (ruff+mypy+pytest, já injeta o env mínimo que o `Settings` exige) e `make frontend-build` (npm ci + build).
 
+## Manutenção recente
+Melhorias de robustez/ops aplicadas: container **non-root** (backend e
+frontend), **healthchecks** de backend (`/health` checando banco) e frontend
+(via node), `restart: unless-stopped` nos serviços, **Dependabot** (pip/npm/
+docker/actions), **`Makefile`** (config/venv/lint/test/frontend-build) e
+normalização LF (`.gitattributes`). Referência às mudanças de configuração —
+não alteram o comportamento em tempo de execução.
+
 ## Checklist de produção
 
 🔴 **Blocking**
