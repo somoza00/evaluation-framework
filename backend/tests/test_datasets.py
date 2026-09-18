@@ -49,3 +49,21 @@ async def test_dataset_not_found(client: AsyncClient) -> None:
     """GET /v1/datasets/{id_inexistente} retorna 404."""
     response = await client.get(f"/v1/datasets/{uuid.uuid4()}")
     assert response.status_code == 404
+
+
+async def test_get_dataset_detail_with_samples_count(client: AsyncClient) -> None:
+    """GET /v1/datasets/{id} retorna o dataset com contagem de samples real."""
+    created = await client.post("/v1/datasets", json={"name": "ds-detalhe", "description": ""})
+    dataset_id = created.json()["id"]
+
+    await client.post(
+        f"/v1/datasets/{dataset_id}/samples",
+        json=[{"input": "q1", "expected_output": "a1"}],
+    )
+
+    response = await client.get(f"/v1/datasets/{dataset_id}")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["id"] == dataset_id
+    assert data["name"] == "ds-detalhe"
+    assert data["samples_count"] == 1

@@ -119,3 +119,29 @@ async def list_datasets(
         )
         for dataset, count in rows
     ]
+
+
+@router.get("/{dataset_id}", response_model=DatasetResponse)
+async def get_dataset(
+    dataset_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+) -> DatasetResponse:
+    """Retorna um dataset com a contagem de samples; 404 se não existir."""
+    row = (
+        await session.execute(
+            select(Dataset, func.count(Sample.id).label("samples_count"))
+            .outerjoin(Sample, Sample.dataset_id == Dataset.id)
+            .where(Dataset.id == dataset_id)
+            .group_by(Dataset.id)
+        )
+    ).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="dataset não encontrado")
+    dataset, count = row
+    return DatasetResponse(
+        id=dataset.id,
+        name=dataset.name,
+        description=dataset.description,
+        created_at=dataset.created_at,
+        samples_count=count,
+    )
