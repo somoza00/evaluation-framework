@@ -51,6 +51,29 @@ async def test_dataset_not_found(client: AsyncClient) -> None:
     assert response.status_code == 404
 
 
+async def test_delete_dataset_removes_dataset_and_samples(client: AsyncClient) -> None:
+    """DELETE /v1/datasets/{id} remove o dataset e seus samples."""
+    created = await client.post("/v1/datasets", json={"name": "para-deletar", "description": ""})
+    dataset_id = created.json()["id"]
+
+    await client.post(
+        f"/v1/datasets/{dataset_id}/samples",
+        json=[{"input": "q1", "expected_output": "a1"}],
+    )
+
+    resp = await client.delete(f"/v1/datasets/{dataset_id}")
+    assert resp.status_code == 204
+
+    listing = (await client.get("/v1/datasets")).json()
+    assert all(d["id"] != dataset_id for d in listing)
+
+
+async def test_delete_dataset_404_when_missing(client: AsyncClient) -> None:
+    """DELETE /v1/datasets/{id_inexistente} retorna 404."""
+    response = await client.delete(f"/v1/datasets/{uuid.uuid4()}")
+    assert response.status_code == 404
+
+
 async def test_get_dataset_detail_with_samples_count(client: AsyncClient) -> None:
     """GET /v1/datasets/{id} retorna o dataset com contagem de samples real."""
     created = await client.post("/v1/datasets", json={"name": "ds-detalhe", "description": ""})

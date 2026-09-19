@@ -4,9 +4,9 @@ import uuid
 from datetime import datetime
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_session
@@ -145,3 +145,21 @@ async def get_dataset(
         created_at=dataset.created_at,
         samples_count=count,
     )
+
+
+@router.delete("/{dataset_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_dataset(
+    dataset_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+) -> Response:
+    """Remove um dataset e seus samples (cascade manual — FK não tem CASCADE no banco).
+
+    Apaga os samples antes do dataset, na mesma transação; 404 se não existir.
+    """
+    dataset = await session.get(Dataset, dataset_id)
+    if dataset is None:
+        raise HTTPException(status_code=404, detail="dataset não encontrado")
+    await session.execute(delete(Sample).where(Sample.dataset_id == dataset_id))
+    await session.delete(dataset)
+    await session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
