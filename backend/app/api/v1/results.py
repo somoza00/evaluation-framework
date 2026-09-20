@@ -6,7 +6,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_session
@@ -83,17 +83,36 @@ async def compare_results(
 async def get_results(
     run_id: uuid.UUID,
     session: AsyncSession = Depends(get_session),
+    limit: int = Query(default=50, ge=1, le=500, description="Máx. de resultados por página."),
+    offset: int = Query(default=0, ge=0, description="Pula resultados no início."),
 ) -> dict[str, Any]:
-    """Retorna todos os EvaluationResults de uma run com médias dos scores."""
+    """Retorna EvaluationResults de uma run, paginado (limit/offset), com médias dos scores."""
     run = await session.get(EvaluationRun, run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="run não encontrada")
 
+    total = (
+        await session.execute(
+            select(func.count())
+            .select_from(EvaluationResult)
+            .where(EvaluationResult.run_id == run_id)
+        )
+    ).scalar_one()
+
     results = (
-        await session.execute(select(EvaluationResult).where(EvaluationResult.run_id == run_id))
+        await session.execute(
+            select(EvaluationResult)
+            .where(EvaluationResult.run_id == run_id)
+            .order_by(EvaluationResult.id)
+            .limit(limit)
+            .offset(offset)
+        )
     ).scalars().all()
     return {
         "run_id": str(run_id),
+        "total": total,
+        "limit": limit,
+        "offset": offset,
         "count": len(results),
         "averages": _averages(results),
         "results": [ResultResponse.model_validate(result) for result in results],
