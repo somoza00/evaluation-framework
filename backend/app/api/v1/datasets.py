@@ -147,6 +147,51 @@ async def get_dataset(
     )
 
 
+@router.get("/{dataset_id}/samples")
+async def list_samples(
+    dataset_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    limit: int = Query(default=50, ge=1, le=500, description="Máx. de samples por página."),
+    offset: int = Query(default=0, ge=0),
+) -> dict[str, Any]:
+    """Lista os samples de um dataset, paginado (limit/offset); 404 se dataset não existir."""
+    dataset = await session.get(Dataset, dataset_id)
+    if dataset is None:
+        raise HTTPException(status_code=404, detail="dataset não encontrado")
+
+    total = (
+        await session.execute(
+            select(func.count()).select_from(Sample).where(Sample.dataset_id == dataset_id)
+        )
+    ).scalar_one()
+
+    samples = (
+        await session.execute(
+            select(Sample)
+            .where(Sample.dataset_id == dataset_id)
+            .order_by(Sample.id)
+            .limit(limit)
+            .offset(offset)
+        )
+    ).scalars().all()
+    return {
+        "dataset_id": str(dataset_id),
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "count": len(samples),
+        "samples": [
+            {
+                "id": str(sample.id),
+                "input": sample.input,
+                "expected_output": sample.expected_output,
+                "metadata": sample.metadata_,
+            }
+            for sample in samples
+        ],
+    }
+
+
 @router.delete("/{dataset_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_dataset(
     dataset_id: uuid.UUID,

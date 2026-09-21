@@ -90,3 +90,31 @@ async def test_get_dataset_detail_with_samples_count(client: AsyncClient) -> Non
     assert data["id"] == dataset_id
     assert data["name"] == "ds-detalhe"
     assert data["samples_count"] == 1
+
+
+async def test_list_samples_paginated(client: AsyncClient) -> None:
+    """GET /v1/datasets/{id}/samples devolve samples paginados com total."""
+    created = await client.post("/v1/datasets", json={"name": "ds-samples", "description": ""})
+    dataset_id = created.json()["id"]
+
+    await client.post(
+        f"/v1/datasets/{dataset_id}/samples",
+        json=[{"input": f"q{i}", "expected_output": f"a{i}"} for i in range(3)],
+    )
+
+    response = await client.get(f"/v1/datasets/{dataset_id}/samples", params={"limit": 2})
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["total"] == 3
+    assert body["count"] == 2
+    assert len(body["samples"]) == 2
+    # Ordenação é por UUID (id), não por inserção; checa os valores como conjunto.
+    inputs = {s["input"] for s in body["samples"]}
+    assert inputs <= {"q0", "q1", "q2"}
+    assert all("expected_output" in s and isinstance(s["expected_output"], str) for s in body["samples"])
+
+
+async def test_list_samples_404_when_dataset_missing(client: AsyncClient) -> None:
+    """Listar samples de dataset inexistente retorna 404."""
+    response = await client.get(f"/v1/datasets/{uuid.uuid4()}/samples")
+    assert response.status_code == 404
