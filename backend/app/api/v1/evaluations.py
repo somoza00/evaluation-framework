@@ -4,9 +4,9 @@ import uuid
 from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -172,3 +172,18 @@ async def get_evaluation(
         finished_at=run.finished_at,
         progress=_progress(samples or 0, results or 0),
     )
+
+
+@router.delete("/{run_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_evaluation(
+    run_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+) -> Response:
+    """Remove uma run e seus resultados (cascade manual — FK sem CASCADE); 404 se não existir."""
+    run = await session.get(EvaluationRun, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="run não encontrada")
+    await session.execute(delete(EvaluationResult).where(EvaluationResult.run_id == run_id))
+    await session.delete(run)
+    await session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

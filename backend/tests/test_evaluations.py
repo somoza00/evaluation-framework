@@ -108,3 +108,25 @@ async def test_get_results_invalid_limit_422(client: AsyncClient, mock_runner: N
 
     response = await client.get(f"/v1/results/{run_id}", params={"limit": 9999})
     assert response.status_code == 422
+
+
+async def test_delete_evaluation_removes_run(client: AsyncClient, mock_runner: None) -> None:
+    """DELETE /v1/evaluations/{id} remove a run."""
+    dataset_id = await _create_dataset(client)
+    created = await client.post(
+        "/v1/evaluations",
+        json={"dataset_id": dataset_id, "model": "m", "judge_type": "deterministic"},
+    )
+    run_id = created.json()["id"]
+
+    resp = await client.delete(f"/v1/evaluations/{run_id}")
+    assert resp.status_code == 204
+
+    listing = (await client.get("/v1/evaluations")).json()
+    assert all(r["id"] != run_id for r in listing)
+
+
+async def test_delete_evaluation_404_when_missing(client: AsyncClient, mock_runner: None) -> None:
+    """DELETE /v1/evaluations/{id_inexistente} retorna 404."""
+    response = await client.delete(f"/v1/evaluations/{uuid.uuid4()}")
+    assert response.status_code == 404
