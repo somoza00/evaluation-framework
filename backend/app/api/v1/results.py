@@ -60,8 +60,11 @@ async def compare_results(
     if len(runs_found) != len(run_ids):
         raise HTTPException(status_code=404, detail="uma ou mais runs não encontradas")
 
+    # Respeita a ordem pedida pelo client (runs=B,A,C => resposta [B,A,C]),
+    # em vez da ordem do banco (por inserção), para o side-by-side não desalinhar.
+    runs_by_id = {run.id: run for run in runs_found}
     comparison = []
-    for run in runs_found:
+    for run in (runs_by_id[run_id] for run_id in run_ids):
         results = (
             await session.execute(
                 select(EvaluationResult).where(EvaluationResult.run_id == run.id)
@@ -108,12 +111,19 @@ async def get_results(
             .offset(offset)
         )
     ).scalars().all()
+    # Médias sobre TODOS os resultados da run (não só a página): senão páginas
+    # diferentes mostram médias diferentes e divergem de /compare.
+    all_results = (
+        await session.execute(
+            select(EvaluationResult).where(EvaluationResult.run_id == run_id)
+        )
+    ).scalars().all()
     return {
         "run_id": str(run_id),
         "total": total,
         "limit": limit,
         "offset": offset,
         "count": len(results),
-        "averages": _averages(results),
+        "averages": _averages(all_results),
         "results": [ResultResponse.model_validate(result) for result in results],
     }
