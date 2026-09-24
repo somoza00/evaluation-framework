@@ -48,7 +48,16 @@ async def compare_results(
 ) -> dict[str, Any]:
     """Compara médias de score entre múltiplas runs (side-by-side)."""
     try:
-        run_ids = [uuid.UUID(part.strip()) for part in runs.split(",") if part.strip()]
+        seen: set[uuid.UUID] = set()
+        run_ids: list[uuid.UUID] = []
+        for part in runs.split(","):
+            part = part.strip()
+            if not part:
+                continue
+            uid = uuid.UUID(part)
+            if uid not in seen:
+                seen.add(uid)
+                run_ids.append(uid)
     except ValueError:
         raise HTTPException(status_code=422, detail="runs deve conter UUIDs separados por vírgula")
     if not run_ids:

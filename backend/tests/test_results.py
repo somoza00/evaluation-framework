@@ -1,4 +1,4 @@
-"""Testes dos endpoints de results (médias e ordem do compare)."""
+"""Testes dos endpoints de results: médias, ordem e dedupe no compare."""
 
 import uuid
 
@@ -77,3 +77,17 @@ async def test_compare_respects_requested_order(
     assert response.status_code == 200, response.text
     got = [r["run_id"] for r in response.json()["runs"]]
     assert got == requested
+
+
+async def test_compare_deduplicates_duplicate_run_ids(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """runs=<id>,<id> não deve dar 404 falso: IDs duplicados são despulados."""
+    created = await client.post("/v1/datasets", json={"name": "ds", "description": ""})
+    dataset_id = created.json()["id"]
+    run_id = await _make_run(db_session, dataset_id)
+
+    response = await client.get("/v1/results/compare", params={"runs": f"{run_id},{run_id}"})
+    assert response.status_code == 200, response.text
+    got = [r["run_id"] for r in response.json()["runs"]]
+    assert got == [run_id]

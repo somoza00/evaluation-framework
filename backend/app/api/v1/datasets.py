@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Response, status
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -26,8 +26,17 @@ _MAX_PAGE_SIZE = 200
 class DatasetCreate(BaseModel):
     """Body do POST /v1/datasets."""
 
-    name: str = Field(max_length=255)
+    name: str = Field(min_length=1, max_length=255)
     description: str = Field(default="", max_length=5_000)
+
+    @field_validator("name")
+    @classmethod
+    def _name_not_blank(cls, value: str) -> str:
+        """Nome é o identificador exibível; rejeita vazio/só espaços (422)."""
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("name não pode ser vazio")
+        return stripped
 
 
 class SampleCreate(BaseModel):
