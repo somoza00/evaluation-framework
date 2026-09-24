@@ -16,6 +16,12 @@ async def test_create_dataset(client: AsyncClient) -> None:
     assert uuid.UUID(data["id"])  # id é UUID válido
 
 
+async def test_create_dataset_rejects_blank_name(client: AsyncClient) -> None:
+    """POST /v1/datasets com name vazio ou só espaços é rejeitado (422)."""
+    resp = await client.post("/v1/datasets", json={"name": "   ", "description": ""})
+    assert resp.status_code == 422
+
+
 async def test_list_datasets(client: AsyncClient) -> None:
     """GET /v1/datasets retorna lista com os datasets criados."""
     await client.post("/v1/datasets", json={"name": "ds-um", "description": ""})
