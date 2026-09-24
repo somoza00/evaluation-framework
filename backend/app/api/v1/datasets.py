@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_session
 from app.models.dataset import Dataset, Sample
+from app.models.evaluation import EvaluationRun
 
 router = APIRouter(prefix="/datasets", tags=["datasets"])
 
@@ -213,6 +214,16 @@ async def delete_dataset(
     dataset = await session.get(Dataset, dataset_id)
     if dataset is None:
         raise HTTPException(status_code=404, detail="dataset não encontrado")
+    # A FK evaluation_runs.dataset_id não tem ON DELETE CASCADE: apagar um
+    # dataset com runs deixaria runs órfãs / violaria a FK no Postgres (500).
+    runs_count = await session.scalar(
+        select(func.count(EvaluationRun.id)).where(EvaluationRun.dataset_id == dataset_id)
+    )
+    if runs_count:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"dataset possui {runs_count} evaluation run(s); remova as runs antes",
+        )
     await session.execute(delete(Sample).where(Sample.dataset_id == dataset_id))
     await session.delete(dataset)
     await session.commit()

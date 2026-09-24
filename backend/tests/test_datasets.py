@@ -3,6 +3,9 @@
 import uuid
 
 from httpx import AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.models.evaluation import EvaluationRun, JudgeType, RunStatus
 
 
 async def test_create_dataset(client: AsyncClient) -> None:
@@ -78,6 +81,32 @@ async def test_delete_dataset_404_when_missing(client: AsyncClient) -> None:
     """DELETE /v1/datasets/{id_inexistente} retorna 404."""
     response = await client.delete(f"/v1/datasets/{uuid.uuid4()}")
     assert response.status_code == 404
+
+
+async def test_delete_dataset_409_when_has_runs(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """DELETE /v1/datasets/{id} com evaluation runs retorna 409 (não 500/viola FK)."""
+    created = await client.post("/v1/datasets", json={"name": "ds", "description": ""})
+    dataset_id = created.json()["id"]
+
+    db_session.add(
+        EvaluationRun(
+            id=uuid.uuid4(),
+            dataset_id=uuid.UUID(dataset_id),
+            model="m",
+            judge_type=JudgeType.DETERMINISTIC,
+            status=RunStatus.DONE,
+        )
+    )
+    await db_session.commit()
+
+    response = await client.delete(f"/v1/datasets/{dataset_id}")
+    assert response.status_code == 409
+
+    # dataset continua existindo (nada foi apagado)
+    detail = (await client.get(f"/v1/datasets/{dataset_id}")).json()
+    assert detail["id"] == dataset_id
 
 
 async def test_get_dataset_detail_with_samples_count(client: AsyncClient) -> None:
