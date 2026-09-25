@@ -58,3 +58,22 @@ async def test_done_and_failed_runs_are_left_untouched(db_session) -> None:
     }
     assert status_by_id[done.id] == RunStatus.DONE
     assert status_by_id[failed.id] == RunStatus.FAILED
+
+
+async def test_orphaned_failed_run_gets_finished_at(db_session) -> None:
+    """Uma run órfã marcada FAILED também ganha finished_at (antes ficava nulo)."""
+    now = utcnow_naive()
+    old = _run(
+        status=RunStatus.RUNNING,
+        created_at=now - timedelta(seconds=settings.ORPHANED_RUN_MAX_AGE_SECONDS + 60),
+    )
+    db_session.add(old)
+    await db_session.commit()
+
+    assert old.finished_at is None
+    await _recover_orphaned_runs(db_session)
+
+    # O bulk update não sincroniza o objeto já na identity map; popule do banco.
+    recovered = await db_session.get(EvaluationRun, old.id, populate_existing=True)
+    assert recovered.status == RunStatus.FAILED
+    assert recovered.finished_at is not None

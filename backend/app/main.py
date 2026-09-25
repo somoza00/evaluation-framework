@@ -112,6 +112,6 @@ async def _recover_orphaned_runs(session: AsyncSession) -> None:
         update(EvaluationRun)
         .where(EvaluationRun.status == RunStatus.RUNNING)
         .where(EvaluationRun.created_at < cutoff)
-        .values(status=RunStatus.FAILED)
+        .values(status=RunStatus.FAILED, finished_at=utcnow_naive())
     )
     await session.commit()

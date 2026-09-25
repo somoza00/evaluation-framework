@@ -104,6 +104,7 @@ class EvaluationRunner:
             # original, deixando a run presa em RUNNING.
             await self.session.rollback()
             run.status = RunStatus.FAILED
+            run.finished_at = utcnow_naive()
             await self.session.commit()
             raise
 
