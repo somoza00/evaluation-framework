@@ -77,7 +77,7 @@ class EvaluationRunner:
                 async with semaphore:
                     try:
                         actual_output = await self._call_model(run.model, sample.input)
-                    except (httpx.HTTPError, KeyError, IndexError) as exc:
+                    except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError) as exc:
                         return EvaluationResult(
                             run_id=run.id,
                             sample_id=sample.id,

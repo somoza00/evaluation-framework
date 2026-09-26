@@ -119,6 +119,35 @@ async def test_run_isolates_single_sample_failure(db_session: AsyncSession) -> N
     assert len(ok) == 1
 
 
+async def test_run_model_malformed_json_isolates_sample(db_session: AsyncSession) -> None:
+    """Gateway 200 com corpo não-JSON vira erro POR sample; a run NÃO vira FAILED."""
+    run = await _make_run(db_session, JudgeType.DETERMINISTIC, n_samples=1)
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, content=b"nao-e-json", headers={"content-type": "application/json"}
+        )
+
+    runner = EvaluationRunner(db_session, settings)
+    runner.llm_judge.client = httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), base_url="http://test"
+    )
+    try:
+        await runner.run(run.id)
+    finally:
+        await runner.close()
+
+    await db_session.refresh(run)
+    assert run.status == RunStatus.DONE  # não FAILED
+
+    results = (
+        await db_session.execute(select(EvaluationResult).where(EvaluationResult.run_id == run.id))
+    ).scalars().all()
+    assert len(results) == 1
+    assert results[0].actual_output == ""
+    assert "erro ao chamar o modelo avaliado" in (results[0].judge_reasoning or "")
+
+
 async def test_run_llm_judge_failure_records_none_score(db_session: AsyncSession) -> None:
     """Judge LLM fora do ar: resultado grava score_overall=None, run ainda DONE."""
     run = await _make_run(db_session, JudgeType.LLM, n_samples=1)
