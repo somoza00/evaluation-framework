@@ -25,6 +25,17 @@ async def test_create_dataset_rejects_blank_name(client: AsyncClient) -> None:
     assert resp.status_code == 422
 
 
+async def test_add_samples_rejects_blank_input(client: AsyncClient) -> None:
+    """Sample com input só de espaços é rejeitado (422) — não corrompe médias."""
+    created = await client.post("/v1/datasets", json={"name": "ds", "description": ""})
+    dataset_id = created.json()["id"]
+    resp = await client.post(
+        f"/v1/datasets/{dataset_id}/samples",
+        json=[{"input": "   ", "expected_output": "a1"}],
+    )
+    assert resp.status_code == 422
+
+
 async def test_list_datasets(client: AsyncClient) -> None:
     """GET /v1/datasets retorna lista com os datasets criados."""
     await client.post("/v1/datasets", json={"name": "ds-um", "description": ""})

@@ -46,6 +46,14 @@ class SampleCreate(BaseModel):
     expected_output: str = Field(max_length=_MAX_FIELD_LENGTH)
     metadata: dict[str, Any] = {}
 
+    @field_validator("input", "expected_output")
+    @classmethod
+    def _not_blank(cls, value: str) -> str:
+        """Input/expected em branco degrada o judge p/ 0.0 silencioso; rejeita (422)."""
+        if not value.strip():
+            raise ValueError("input/expected_output não pode ser vazio")
+        return value
+
 
 class DatasetResponse(BaseModel):
     """Resposta de dataset (samples_count preenchido manualmente)."""
