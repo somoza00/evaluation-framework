@@ -1,11 +1,13 @@
 """Testes dos endpoints de evaluations (runner mockado, sem HTTP real)."""
 
 import uuid
+from datetime import UTC, datetime
 
 import pytest
 from httpx import AsyncClient
 
 import app.api.v1.evaluations as evaluations_module
+from app.models.evaluation import EvaluationRun, JudgeType
 
 
 @pytest.fixture
@@ -130,3 +132,22 @@ async def test_delete_evaluation_404_when_missing(client: AsyncClient, mock_runn
     """DELETE /v1/evaluations/{id_inexistente} retorna 404."""
     response = await client.delete(f"/v1/evaluations/{uuid.uuid4()}")
     assert response.status_code == 404
+
+
+async def test_list_evaluations_stable_tiebreak(
+    client: AsyncClient, db_session, mock_runner: None
+) -> None:
+    """Mesmo created_at: desempate por id desc (ordem total p/ paginação estável)."""
+    ds = (await client.post("/v1/datasets", json={"name": "ds"})).json()["id"]
+    ts = datetime(2026, 1, 1, tzinfo=UTC)
+    low, high = uuid.UUID(int=1), uuid.UUID(int=2)
+    for uid in (low, high):
+        db_session.add(
+            EvaluationRun(
+                id=uid, dataset_id=uuid.UUID(ds), model="m",
+                judge_type=JudgeType.DETERMINISTIC, created_at=ts,
+            )
+        )
+    await db_session.commit()
+    ids = [r["id"] for r in (await client.get("/v1/evaluations")).json()]
+    assert ids == [str(high), str(low)]

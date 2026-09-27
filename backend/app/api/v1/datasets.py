@@ -122,7 +122,7 @@ async def list_datasets(
             select(Dataset, func.count(Sample.id).label("samples_count"))
             .outerjoin(Sample, Sample.dataset_id == Dataset.id)
             .group_by(Dataset.id)
-            .order_by(Dataset.created_at.desc())
+            .order_by(Dataset.created_at.desc(), Dataset.id.desc())
             .limit(limit)
             .offset(offset)
         )
@@ -169,7 +169,7 @@ async def get_dataset(
 async def list_samples(
     dataset_id: uuid.UUID,
     session: AsyncSession = Depends(get_session),
-    limit: int = Query(default=50, ge=1, le=500, description="Máx. de samples por página."),
+    limit: int = Query(default=50, ge=1, le=_MAX_PAGE_SIZE, description="Máx. de samples por página."),
     offset: int = Query(default=0, ge=0),
 ) -> dict[str, Any]:
     """Lista os samples de um dataset, paginado (limit/offset); 404 se dataset não existir."""

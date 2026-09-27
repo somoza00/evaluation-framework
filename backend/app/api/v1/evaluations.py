@@ -126,7 +126,7 @@ async def list_evaluations(
                 samples_sq.label("samples_count"),
                 results_sq.label("results_count"),
             )
-            .order_by(EvaluationRun.created_at.desc())
+            .order_by(EvaluationRun.created_at.desc(), EvaluationRun.id.desc())
             .limit(limit)
             .offset(offset)
         )
