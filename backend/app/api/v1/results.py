@@ -91,11 +91,14 @@ async def compare_results(
     return {"runs": comparison}
 
 
+_MAX_PAGE_SIZE = 200
+
+
 @router.get("/{run_id}")
 async def get_results(
     run_id: uuid.UUID,
     session: AsyncSession = Depends(get_session),
-    limit: int = Query(default=50, ge=1, le=500, description="Máx. de resultados por página."),
+    limit: int = Query(default=50, ge=1, le=_MAX_PAGE_SIZE, description="Máx. de resultados por página."),
     offset: int = Query(default=0, ge=0, description="Pula resultados no início."),
 ) -> dict[str, Any]:
     """Retorna EvaluationResults de uma run, paginado (limit/offset), com médias dos scores."""
