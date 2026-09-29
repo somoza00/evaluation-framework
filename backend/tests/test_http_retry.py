@@ -113,3 +113,47 @@ async def test_parse_retry_after_supports_http_date() -> None:
     resp = httpx.Response(429, headers={"Retry-After": "Wed, 21 Oct 2026 07:28:00 GMT"})
     now = datetime(2026, 10, 21, 7, 27, 0, tzinfo=UTC)
     assert _parse_retry_after(resp, now=now) == 60.0
+
+
+@pytest.mark.parametrize("bad", ["inf", "nan", "1e999"])
+async def test_parse_retry_after_treats_non_finite_as_zero(bad: str) -> None:
+    """Retry-After não-finito (inf/nan/overflow) vira 0s, nunca asyncio.sleep(inf).
+
+    Um upstream mal configurado que emita `Retry-After: inf` não pode travar a
+    sample da run pra sempre.
+    """
+    from app.services.http_retry import _parse_retry_after
+
+    resp = httpx.Response(429, headers={"Retry-After": bad})
+    assert _parse_retry_after(resp) == 0.0
+
+
+async def test_non_finite_retry_after_retries_with_base_backoff() -> None:
+    """429 com Retry-After "inf" refaz com backoff normal (finito), sem travar."""
+    sleeps: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr("app.services.http_retry.asyncio.sleep", fake_sleep)
+    try:
+        calls = {"n": 0}
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return httpx.Response(429, headers={"Retry-After": "inf"})
+            return httpx.Response(200, json={"ok": True})
+
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(handler), base_url="http://test"
+        ) as client:
+            await post_with_retry(client, "/x", headers={}, json_body={}, base_delay=0.1)
+
+        assert calls["n"] == 2
+        # Retry-After inválido é ignorado: o sleep usa só o backoff exponencial.
+        assert sleeps == [0.1]
+        assert all(s < float("inf") for s in sleeps)
+    finally:
+        monkeypatch.undo()
