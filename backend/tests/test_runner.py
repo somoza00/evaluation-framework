@@ -85,6 +85,36 @@ async def test_run_deterministic_end_to_end(db_session: AsyncSession) -> None:
     assert all(r.score_overall is not None for r in results)
 
 
+async def test_run_empty_dataset_marks_failed(db_session: AsyncSession) -> None:
+    """Run sobre dataset sem samples vira FAILED (não DONE com 0 resultados).
+
+    O caminho antigo marcava DONE com progress 0.0 sem nada avaliado — parecia
+    "avaliou e não deu nada", em vez de sinalizar que o dataset precisa de samples.
+    """
+    run = await _make_run(db_session, JudgeType.DETERMINISTIC, n_samples=0)
+
+    runner = EvaluationRunner(db_session, settings)
+    runner.llm_judge.client = httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(500)  # se chamado, é bug
+        ),
+        base_url="http://test",
+    )
+    try:
+        await runner.run(run.id)
+    finally:
+        await runner.close()
+
+    await db_session.refresh(run)
+    assert run.status == RunStatus.FAILED
+    assert run.finished_at is not None
+
+    results = (
+        await db_session.execute(select(EvaluationResult).where(EvaluationResult.run_id == run.id))
+    ).scalars().all()
+    assert len(results) == 0
+
+
 async def test_run_isolates_single_sample_failure(db_session: AsyncSession) -> None:
     """Erro ao chamar o modelo numa sample não derruba a run inteira (era FAILED total)."""
     run = await _make_run(db_session, JudgeType.DETERMINISTIC, n_samples=2)
