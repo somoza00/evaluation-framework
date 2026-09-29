@@ -71,6 +71,16 @@ class EvaluationRunner:
                 )
             ).scalars().all()
 
+            if not samples:
+                # Dataset sem samples: não há nada a avaliar. Marcar FAILED
+                # (com finished_at) em vez de DONE com 0 resultados — o
+                # "done/progress 0.0" parece sucesso sem trabalho e confunde
+                # o usuário entre "avaliou e não deu nada" e "ainda carregando".
+                run.status = RunStatus.FAILED
+                run.finished_at = utcnow_naive()
+                await self.session.commit()
+                return
+
             semaphore = asyncio.Semaphore(max(1, self.settings.RUN_CONCURRENCY))
 
             async def process(sample: Sample) -> EvaluationResult:
