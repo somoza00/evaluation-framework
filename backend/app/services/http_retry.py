@@ -9,6 +9,7 @@ sentido re-tentar um 400/401.
 
 import asyncio
 import logging
+import math
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 
@@ -27,7 +28,11 @@ def _parse_retry_after(
     if not value:
         return 0.0
     try:
-        return max(0.0, float(value))
+        seconds = float(value)
+        # float("inf"), "inf" textual, "1e999" (overflow) ou "nan" do upstream
+        # não podem virar asyncio.sleep(<não-finito>) — travaria a sample (e a
+        # run inteira, no gather). Trata como "sem Retry-After" (0s).
+        return max(0.0, seconds) if math.isfinite(seconds) else 0.0
     except ValueError:
         pass
     try:
