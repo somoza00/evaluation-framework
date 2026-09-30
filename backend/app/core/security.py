@@ -63,6 +63,12 @@ async def require_api_key(
 _WINDOW_SECONDS = 60.0
 _hits: dict[str, list[float]] = defaultdict(list)
 
+# Teto de IPs distintos rastreados pelo rate-limit em memória. A API é pública
+# (Cloud Run, sem auth por padrão); sem um limite, cada IP distinto que fizer
+# uma request deixa uma entrada residente pra sempre e o processo cresce sem
+# limite. Ao exceder, o bucket mais antigo é expulso (ordem de inserção).
+_MAX_RATE_LIMIT_IPS = 10_000
+
 
 async def rate_limit(request: Request) -> None:
     """Limita requests/minuto por IP (settings.RATE_LIMIT_PER_MINUTE).
@@ -75,6 +81,7 @@ async def rate_limit(request: Request) -> None:
     """
     client_ip = _client_ip(request)
     now = time.monotonic()
+    is_new_ip = client_ip not in _hits
     hits = _hits[client_ip]
     cutoff = now - _WINDOW_SECONDS
     while hits and hits[0] < cutoff:
@@ -93,4 +100,9 @@ async def rate_limit(request: Request) -> None:
         raise HTTPException(
             status_code=429, detail="rate limit excedido, tente novamente em instantes"
         )
+    if is_new_ip and len(_hits) > _MAX_RATE_LIMIT_IPS:
+        # Expulsa o bucket mais antigo (dict preserva ordem de inserção): sem
+        # isso, um IP que nunca mais volta deixa entrada residente pra sempre
+        # e a memória cresce sem limite na API pública.
+        _hits.pop(next(iter(_hits)), None)
     hits.append(now)

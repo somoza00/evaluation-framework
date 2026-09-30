@@ -95,3 +95,23 @@ async def test_trust_proxy_headers_splits_bucket_by_xff(
     assert client_a_first.status_code == 200
     assert client_b_first.status_code == 200  # IP diferente, bucket próprio
     assert client_a_second.status_code == 429  # mesmo IP do primeiro, já estourou
+
+
+async def test_rate_limit_bounds_distinct_ips(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Rate-limit em memória não cresce sem limite: expulsa o IP mais antigo.
+
+    A API é pública; sem `_MAX_RATE_LIMIT_IPS`, cada IP distinto deixa uma
+    entrada residente pra sempre e o processo vaza memória com o tempo.
+    """
+    monkeypatch.setattr(settings, "TRUST_PROXY_HEADERS", True)
+    monkeypatch.setattr(settings, "RATE_LIMIT_PER_MINUTE", 50)
+    monkeypatch.setattr(security_module, "_MAX_RATE_LIMIT_IPS", 2)
+
+    for ip in ("1.1.1.1", "2.2.2.2", "3.3.3.3"):
+        await client.get("/v1/datasets", headers={"X-Forwarded-For": ip})
+
+    assert "1.1.1.1" not in security_module._hits  # mais antigo foi expulso
+    assert "2.2.2.2" in security_module._hits
+    assert "3.3.3.3" in security_module._hits
