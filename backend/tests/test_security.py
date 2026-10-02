@@ -64,6 +64,8 @@ async def test_rate_limit_blocks_after_threshold(
     assert first.status_code == 200
     assert second.status_code == 200
     assert third.status_code == 429
+    # 429 diz ao cliente quanto esperar (janela de 60s), sem adivinhar.
+    assert third.headers.get("retry-after") == "60"
 
 
 async def test_proxy_headers_ignored_by_default(

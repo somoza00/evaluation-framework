@@ -98,7 +98,9 @@ async def rate_limit(request: Request) -> None:
             },
         )
         raise HTTPException(
-            status_code=429, detail="rate limit excedido, tente novamente em instantes"
+            status_code=429,
+            detail="rate limit excedido, tente novamente em instantes",
+            headers={"Retry-After": str(int(_WINDOW_SECONDS))},
         )
     if is_new_ip and len(_hits) > _MAX_RATE_LIMIT_IPS:
         # Expulsa o bucket mais antigo (dict preserva ordem de inserção): sem
