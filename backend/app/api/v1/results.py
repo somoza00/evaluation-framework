@@ -10,6 +10,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_session
+from app.models.dataset import Sample
 from app.models.evaluation import EvaluationResult, EvaluationRun
 
 router = APIRouter(prefix="/results", tags=["results"])
@@ -29,6 +30,10 @@ class ResultResponse(BaseModel):
     score_instruction: float | None
     score_overall: float | None
     judge_reasoning: str | None
+    # Preenchidos por join com `samples` — o frontend (ResultsTable) exibe o
+    # input/esperado de cada sample na tabela; sem isto a tabela mostrava "—".
+    input: str | None = None
+    expected_output: str | None = None
 
 
 def _averages(results: Sequence[EvaluationResult]) -> dict[str, float | None]:
@@ -130,6 +135,24 @@ async def get_results(
             select(EvaluationResult).where(EvaluationResult.run_id == run_id)
         )
     ).scalars().all()
+
+    # Join com os samples para expor input/expected_output de cada resultado
+    # (a página de Results mostra isso na tabela).
+    sample_ids = [result.sample_id for result in results]
+    samples_by_id: dict[uuid.UUID, Sample] = {}
+    if sample_ids:
+        samples = (
+            await session.execute(select(Sample).where(Sample.id.in_(sample_ids)))
+        ).scalars().all()
+        samples_by_id = {sample.id: sample for sample in samples}
+
+    payload = []
+    for result in results:
+        sample = samples_by_id.get(result.sample_id)
+        item = ResultResponse.model_validate(result).model_dump()
+        item["input"] = sample.input if sample is not None else None
+        item["expected_output"] = sample.expected_output if sample is not None else None
+        payload.append(item)
     return {
         "run_id": str(run_id),
         "total": total,
@@ -137,5 +160,5 @@ async def get_results(
         "offset": offset,
         "count": len(results),
         "averages": _averages(all_results),
-        "results": [ResultResponse.model_validate(result) for result in results],
+        "results": payload,
     }

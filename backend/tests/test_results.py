@@ -61,6 +61,36 @@ async def test_averages_cover_all_results_not_just_page(
     assert body["averages"]["score_overall"] == pytest.approx(sum(scores) / len(scores))
 
 
+async def test_results_include_sample_input_and_expected(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """GET /v1/results/{run_id} inclui input/expected_output do sample (tabela do FE)."""
+    created = await client.post("/v1/datasets", json={"name": "ds", "description": ""})
+    dataset_id = created.json()["id"]
+    samples = await client.post(
+        f"/v1/datasets/{dataset_id}/samples",
+        json=[{"input": "pergunta X", "expected_output": "resposta X"}],
+    )
+    sample_ids = samples.json()["ids"]
+
+    run_id = await _make_run(db_session, dataset_id)
+    db_session.add(
+        EvaluationResult(
+            run_id=uuid.UUID(run_id),
+            sample_id=uuid.UUID(sample_ids[0]),
+            actual_output="resposta do modelo",
+            score_overall=0.9,
+        )
+    )
+    await db_session.commit()
+
+    response = await client.get(f"/v1/results/{run_id}")
+    assert response.status_code == 200, response.text
+    result = response.json()["results"][0]
+    assert result["input"] == "pergunta X"
+    assert result["expected_output"] == "resposta X"
+
+
 async def test_compare_respects_requested_order(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
