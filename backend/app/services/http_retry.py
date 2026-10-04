@@ -66,7 +66,12 @@ async def post_with_retry(
             if response.status_code not in _RETRYABLE_STATUS:
                 response.raise_for_status()
                 return response
-            if response.status_code == 429:
+            if not response.headers.get("retry-after"):
+                retry_after_seconds = 0.0
+            else:
+                # Honra o Retry-After do upstream tanto no 429 quanto num 5xx
+                # (ex.: 503 de manutenção/overload do gateway) — o upstream sabe
+                # melhor que o nosso backoff exponencial quanto esperar.
                 retry_after_seconds = _parse_retry_after(response)
             last_exc = httpx.HTTPStatusError(
                 f"status {response.status_code}", request=response.request, response=response

@@ -157,3 +157,30 @@ async def test_non_finite_retry_after_retries_with_base_backoff() -> None:
         assert all(s < float("inf") for s in sleeps)
     finally:
         monkeypatch.undo()
+
+
+async def test_retry_respects_retry_after_on_5xx(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """503 com Retry-After também é honrado (não só 429)."""
+    sleeps: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+
+    monkeypatch.setattr("app.services.http_retry.asyncio.sleep", fake_sleep)
+    calls = {"n": 0}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return httpx.Response(503, headers={"Retry-After": "5"})
+        return httpx.Response(200, json={"ok": True})
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), base_url="http://test"
+    ) as client:
+        await post_with_retry(client, "/x", headers={}, json_body={}, base_delay=0.1)
+
+    assert calls["n"] == 2
+    assert sleeps and max(sleeps) >= 5.0
