@@ -7,7 +7,7 @@ import pytest
 from httpx import AsyncClient
 
 import app.api.v1.evaluations as evaluations_module
-from app.models.evaluation import EvaluationRun, JudgeType
+from app.models.evaluation import EvaluationRun, JudgeType, RunStatus
 
 
 @pytest.fixture
@@ -151,3 +151,30 @@ async def test_list_evaluations_stable_tiebreak(
     await db_session.commit()
     ids = [r["id"] for r in (await client.get("/v1/evaluations")).json()]
     assert ids == [str(high), str(low)]
+
+
+async def test_list_evaluations_filters_by_status(
+    client: AsyncClient, db_session, mock_runner: None
+) -> None:
+    """`?status=done` retorna só as runs com esse status."""
+    ds = (await client.post("/v1/datasets", json={"name": "ds"})).json()["id"]
+    done_id, failed_id = uuid.UUID(int=3), uuid.UUID(int=4)
+    db_session.add(
+        EvaluationRun(
+            id=done_id, dataset_id=uuid.UUID(ds), model="m",
+            judge_type=JudgeType.DETERMINISTIC, status=RunStatus.DONE,
+        )
+    )
+    db_session.add(
+        EvaluationRun(
+            id=failed_id, dataset_id=uuid.UUID(ds), model="m",
+            judge_type=JudgeType.DETERMINISTIC, status=RunStatus.FAILED,
+        )
+    )
+    await db_session.commit()
+
+    filtered = (await client.get("/v1/evaluations", params={"status": "done"})).json()
+    assert [r["id"] for r in filtered] == [str(done_id)]
+
+    all_runs = (await client.get("/v1/evaluations")).json()
+    assert {r["id"] for r in all_runs} == {str(done_id), str(failed_id)}
