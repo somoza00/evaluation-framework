@@ -104,9 +104,15 @@ async def create_evaluation(
 async def list_evaluations(
     limit: Annotated[int, Query(ge=1, le=_MAX_PAGE_SIZE)] = _DEFAULT_PAGE_SIZE,
     offset: Annotated[int, Query(ge=0)] = 0,
+    status_filter: Annotated[
+        RunStatus | None, Query(alias="status", description="Filtra runs por status.")
+    ] = None,
     session: AsyncSession = Depends(get_session),
 ) -> list[RunResponse]:
-    """Lista runs com progresso (results_count / samples_count), paginado."""
+    """Lista runs com progresso (results_count / samples_count), paginado.
+
+    `status` (opcional) filtra por pending/running/done/failed.
+    """
     samples_sq = (
         select(func.count(Sample.id))
         .where(Sample.dataset_id == EvaluationRun.dataset_id)
@@ -119,18 +125,19 @@ async def list_evaluations(
         .correlate(EvaluationRun)
         .scalar_subquery()
     )
-    rows = (
-        await session.execute(
-            select(
-                EvaluationRun,
-                samples_sq.label("samples_count"),
-                results_sq.label("results_count"),
-            )
-            .order_by(EvaluationRun.created_at.desc(), EvaluationRun.id.desc())
-            .limit(limit)
-            .offset(offset)
+    stmt = (
+        select(
+            EvaluationRun,
+            samples_sq.label("samples_count"),
+            results_sq.label("results_count"),
         )
-    ).all()
+        .order_by(EvaluationRun.created_at.desc(), EvaluationRun.id.desc())
+        .limit(limit)
+        .offset(offset)
+    )
+    if status_filter is not None:
+        stmt = stmt.where(EvaluationRun.status == status_filter)
+    rows = (await session.execute(stmt)).all()
     return [
         RunResponse(
             id=run.id,
