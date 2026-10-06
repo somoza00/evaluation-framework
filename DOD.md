@@ -36,9 +36,11 @@ e/ou LLM via myown-llm-gateway) e comparação de resultados.
 - [x] CORS restrito; auth por API key (compare em tempo constante) + rate limit IP.
 - [x] Isolamento de falha por sample; commit por sample; recovery de runs órfãs.
 - [x] Paginação + índices + `UNIQUE(run_id, sample_id)`; body-size limit.
-- [ ] Fila/worker de verdade (hoje `BackgroundTasks` in-process: a run não
-      sobrevive a um `docker restart`).
-- [ ] Rate limit compartilhado (Redis) — hoje é em memória por processo.
+- [x] Worker durável: rede de segurança que reivindica e executa runs `PENDING`
+      presas (dispatch perdido/restart). Runs que ficaram `RUNNING` no crash
+      ainda viram `FAILED` (resumir exigiria broker real — arq/Celery).
+- [x] Rate limit compartilhado (Redis) — opt-in via `REDIS_URL`; sem Redis (ou
+      se ele cair), cai no limiter em memória por processo.
 
 🟢 **Nice-to-have**
 - [ ] Métricas Prometheus + tracing (OTel) + alertas.
