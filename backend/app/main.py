@@ -1,5 +1,7 @@
 """Entrypoint da aplicação FastAPI do evaluation-framework."""
 
+import asyncio
+import contextlib
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -20,6 +22,7 @@ from app.core.logging import RequestContextMiddleware, configure_logging
 from app.core.security import rate_limit, require_api_key
 from app.core.time import utcnow_naive
 from app.models.evaluation import EvaluationRun, RunStatus
+from app.services.worker import run_worker_loop
 
 configure_logging()
 logger = logging.getLogger("app")
@@ -39,7 +42,17 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             await conn.run_sync(Base.metadata.create_all)
     async with AsyncSessionLocal() as session:
         await _recover_orphaned_runs(session)
-    yield
+    worker_task: asyncio.Task[None] | None = None
+    if settings.RUN_WORKER_ENABLED:
+        # Rede de segurança: reivindica runs PENDING presas (dispatch perdido).
+        worker_task = asyncio.create_task(run_worker_loop())
+    try:
+        yield
+    finally:
+        if worker_task is not None:
+            worker_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await worker_task
 
 
 app = FastAPI(

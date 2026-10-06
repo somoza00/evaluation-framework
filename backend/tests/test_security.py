@@ -4,6 +4,7 @@ import logging
 
 import pytest
 from httpx import AsyncClient
+from redis.exceptions import RedisError
 
 import app.core.security as security_module
 from app.core.config import settings
@@ -117,3 +118,44 @@ async def test_rate_limit_bounds_distinct_ips(
     assert "1.1.1.1" not in security_module._hits  # mais antigo foi expulso
     assert "2.2.2.2" in security_module._hits
     assert "3.3.3.3" in security_module._hits
+
+
+async def test_shared_rate_limit_counts_in_redis(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Com REDIS_URL, o limite é contado no Redis (compartilhado entre workers)."""
+
+    class FakeRedis:
+        def __init__(self) -> None:
+            self.counts: dict[str, int] = {}
+
+        async def incr(self, key: str) -> int:
+            self.counts[key] = self.counts.get(key, 0) + 1
+            return self.counts[key]
+
+        async def expire(self, key: str, seconds: int) -> bool:
+            return True
+
+    monkeypatch.setattr(settings, "REDIS_URL", "redis://localhost:6379/0")
+    monkeypatch.setattr(security_module, "_redis_client", FakeRedis())
+    monkeypatch.setattr(security_module, "_redis_initialized", True)
+    monkeypatch.setattr(settings, "RATE_LIMIT_PER_MINUTE", 2)
+
+    assert await security_module._shared_rate_limit_exceeded("9.9.9.9") is False
+    assert await security_module._shared_rate_limit_exceeded("9.9.9.9") is False
+    assert await security_module._shared_rate_limit_exceeded("9.9.9.9") is True
+
+
+async def test_shared_rate_limit_falls_back_on_redis_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Redis indisponível → None, para o chamador cair no limiter local."""
+
+    class BrokenRedis:
+        async def incr(self, key: str) -> int:
+            raise RedisError("redis down")
+
+        async def expire(self, key: str, seconds: int) -> bool:
+            return True
+
+    monkeypatch.setattr(settings, "REDIS_URL", "redis://localhost:6379/0")
+    monkeypatch.setattr(security_module, "_redis_client", BrokenRedis())
+    monkeypatch.setattr(security_module, "_redis_initialized", True)
+
+    assert await security_module._shared_rate_limit_exceeded("9.9.9.9") is None

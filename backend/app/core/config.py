@@ -32,6 +32,10 @@ class Settings(BaseSettings):
     # memória — suficiente para um único processo; não substitui um limiter
     # compartilhado se a API rodar com múltiplos workers/réplicas).
     RATE_LIMIT_PER_MINUTE: int = 120
+    # Redis (opcional) para o rate limit COMPARTILHADO entre workers/réplicas.
+    # Vazio = limiter em memória por processo (só cobre 1 processo). Se definido,
+    # os contadores são somados no Redis; se o Redis cair, cai no local.
+    REDIS_URL: str | None = None
     # Samples processadas em paralelo por run (chamadas ao gateway são
     # I/O-bound; processamento serial era o gargalo de performance).
     RUN_CONCURRENCY: int = 5
@@ -39,6 +43,14 @@ class Settings(BaseSettings):
     # mais antigas que isto (segundos). Evita que um deploy rolling marque
     # como falha uma run ainda ativa na instância anterior.
     ORPHANED_RUN_MAX_AGE_SECONDS: int = 300
+    # Worker durável: reivindica e executa runs PENDING presas (ex.: dispatch
+    # perdido num restart). Desligue em ambientes onde não se quer o loop.
+    RUN_WORKER_ENABLED: bool = True
+    # Só reivindica runs PENDING mais antigas que isto (evita corrida com o
+    # BackgroundTasks, que começa a run imediatamente no request).
+    RUN_WORKER_MIN_AGE_SECONDS: int = 30
+    # Intervalo entre varreduras do worker (segundos).
+    RUN_WORKER_POLL_SECONDS: float = 10.0
     # Confia no header X-Forwarded-For para extrair o IP real do cliente no
     # rate limit. Só ative se a API estiver de fato atrás de um proxy que
     # SEMPRE sobrescreve esse header (Traefik/nginx) — sem isso, um cliente

@@ -10,12 +10,29 @@ import logging
 import time
 from collections import defaultdict
 
+import redis.asyncio as redis_async
 from fastapi import Header, HTTPException, Request
+from redis.exceptions import RedisError
 
 from app.core.config import settings
 from app.core.logging import request_id_var
 
 security_logger = logging.getLogger("app.security")
+
+# Cliente Redis opcional para o rate limit compartilhado (lazy).
+_redis_client: redis_async.Redis | None = None
+_redis_initialized = False
+
+
+def _get_redis() -> redis_async.Redis | None:
+    """Cliente Redis do rate limit compartilhado, ou None se REDIS_URL não estiver setada."""
+    global _redis_client, _redis_initialized
+    if not settings.REDIS_URL:
+        return None
+    if not _redis_initialized:
+        _redis_client = redis_async.from_url(settings.REDIS_URL)
+        _redis_initialized = True
+    return _redis_client
 
 
 def _client_ip(request: Request) -> str:
@@ -70,16 +87,27 @@ _hits: dict[str, list[float]] = defaultdict(list)
 _MAX_RATE_LIMIT_IPS = 10_000
 
 
-async def rate_limit(request: Request) -> None:
-    """Limita requests/minuto por IP (settings.RATE_LIMIT_PER_MINUTE).
+def _reject_rate_limited(client_ip: str, request: Request) -> None:
+    """Responde 429 (com Retry-After) e loga o evento no logger app.security."""
+    security_logger.warning(
+        "rate limit exceeded",
+        extra={
+            "extra_fields": {
+                "request_id": request_id_var.get(),
+                "ip": client_ip,
+                "path": request.url.path,
+            }
+        },
+    )
+    raise HTTPException(
+        status_code=429,
+        detail="rate limit excedido, tente novamente em instantes",
+        headers={"Retry-After": str(int(_WINDOW_SECONDS))},
+    )
 
-    Implementação em memória de um único processo: reinicia com o processo
-    e não é compartilhada entre múltiplos workers/réplicas — não é uma
-    defesa contra um atacante determinado nesses cenários, só contra abuso
-    trivial de um único processo/IP. Um limiter de verdade (Redis) fica
-    para quando o deploy realmente tiver mais de um worker.
-    """
-    client_ip = _client_ip(request)
+
+def _in_memory_rate_limit(client_ip: str) -> bool:
+    """Limiter em memória por processo. Retorna True se o limite foi excedido."""
     now = time.monotonic()
     is_new_ip = client_ip not in _hits
     hits = _hits[client_ip]
@@ -87,24 +115,48 @@ async def rate_limit(request: Request) -> None:
     while hits and hits[0] < cutoff:
         hits.pop(0)
     if len(hits) >= settings.RATE_LIMIT_PER_MINUTE:
-        security_logger.warning(
-            "rate limit exceeded",
-            extra={
-                "extra_fields": {
-                    "request_id": request_id_var.get(),
-                    "ip": client_ip,
-                    "path": request.url.path,
-                }
-            },
-        )
-        raise HTTPException(
-            status_code=429,
-            detail="rate limit excedido, tente novamente em instantes",
-            headers={"Retry-After": str(int(_WINDOW_SECONDS))},
-        )
+        return True
     if is_new_ip and len(_hits) > _MAX_RATE_LIMIT_IPS:
         # Expulsa o bucket mais antigo (dict preserva ordem de inserção): sem
         # isso, um IP que nunca mais volta deixa entrada residente pra sempre
         # e a memória cresce sem limite na API pública.
         _hits.pop(next(iter(_hits)), None)
     hits.append(now)
+    return False
+
+
+async def _shared_rate_limit_exceeded(client_ip: str) -> bool | None:
+    """Rate limit compartilhado via Redis (janela fixa). None = desligado/indisponível.
+
+    Com >1 worker/réplica, o limiter em memória por processo não soma os
+    contadores; este é compartilhado (contadores no Redis). Se o Redis cair,
+    devolve None e o chamador usa o limiter local.
+    """
+    client = _get_redis()
+    if client is None:
+        return None
+    key = f"ratelimit:{client_ip}"
+    try:
+        count = await client.incr(key)
+        if count == 1:
+            await client.expire(key, int(_WINDOW_SECONDS))
+    except RedisError:
+        security_logger.warning(
+            "rate_limit_redis_unavailable", extra={"extra_fields": {"ip": client_ip}}
+        )
+        return None
+    return int(count) > settings.RATE_LIMIT_PER_MINUTE
+
+
+async def rate_limit(request: Request) -> None:
+    """Limita requests/minuto por IP (settings.RATE_LIMIT_PER_MINUTE).
+
+    Usa o limiter compartilhado (Redis) quando REDIS_URL está configurada —
+    contadores somados entre workers/réplicas. Sem Redis (ou se ele cair), cai
+    no limiter em memória por processo (best-effort local).
+    """
+    client_ip = _client_ip(request)
+    shared = await _shared_rate_limit_exceeded(client_ip)
+    exceeded = _in_memory_rate_limit(client_ip) if shared is None else shared
+    if exceeded:
+        _reject_rate_limited(client_ip, request)
