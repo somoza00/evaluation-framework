@@ -107,11 +107,13 @@ async def list_evaluations(
     status_filter: Annotated[
         RunStatus | None, Query(alias="status", description="Filtra runs por status.")
     ] = None,
+    model: Annotated[str | None, Query(description="Filtra runs por modelo exato.")] = None,
     session: AsyncSession = Depends(get_session),
 ) -> list[RunResponse]:
     """Lista runs com progresso (results_count / samples_count), paginado.
 
-    `status` (opcional) filtra por pending/running/done/failed.
+    `status` (opcional) filtra por pending/running/done/failed; `model`
+    (opcional) filtra por modelo exato.
     """
     samples_sq = (
         select(func.count(Sample.id))
@@ -137,6 +139,8 @@ async def list_evaluations(
     )
     if status_filter is not None:
         stmt = stmt.where(EvaluationRun.status == status_filter)
+    if model is not None:
+        stmt = stmt.where(EvaluationRun.model == model)
     rows = (await session.execute(stmt)).all()
     return [
         RunResponse(

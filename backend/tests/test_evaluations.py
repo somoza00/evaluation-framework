@@ -178,3 +178,33 @@ async def test_list_evaluations_filters_by_status(
 
     all_runs = (await client.get("/v1/evaluations")).json()
     assert {r["id"] for r in all_runs} == {str(done_id), str(failed_id)}
+
+
+async def test_list_evaluations_filters_by_model(
+    client: AsyncClient, db_session, mock_runner: None
+) -> None:
+    """`?model=` retorna só as runs daquele modelo; ausência do filtro devolve todas."""
+    ds = (await client.post("/v1/datasets", json={"name": "ds"})).json()["id"]
+    ds_id = uuid.UUID(ds)
+    a_id, b_id = uuid.UUID(int=5), uuid.UUID(int=6)
+    db_session.add(
+        EvaluationRun(
+            id=a_id, dataset_id=ds_id, model="deepseek/deepseek-chat",
+            judge_type=JudgeType.DETERMINISTIC,
+        )
+    )
+    db_session.add(
+        EvaluationRun(
+            id=b_id, dataset_id=ds_id, model="openai/gpt-4o",
+            judge_type=JudgeType.DETERMINISTIC,
+        )
+    )
+    await db_session.commit()
+
+    filtered = (
+        await client.get("/v1/evaluations", params={"model": "deepseek/deepseek-chat"})
+    ).json()
+    assert [r["id"] for r in filtered] == [str(a_id)]
+
+    all_runs = (await client.get("/v1/evaluations")).json()
+    assert {r["id"] for r in all_runs} == {str(a_id), str(b_id)}
