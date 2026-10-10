@@ -7,7 +7,7 @@ import pytest
 from httpx import AsyncClient
 
 import app.api.v1.evaluations as evaluations_module
-from app.models.evaluation import EvaluationRun, JudgeType, RunStatus
+from app.models.evaluation import EvaluationResult, EvaluationRun, JudgeType, RunStatus
 
 
 @pytest.fixture
@@ -208,3 +208,50 @@ async def test_list_evaluations_filters_by_model(
 
     all_runs = (await client.get("/v1/evaluations")).json()
     assert {r["id"] for r in all_runs} == {str(a_id), str(b_id)}
+
+
+async def test_done_run_progress_stays_1_after_samples_added(
+    client: AsyncClient, db_session, mock_runner: None
+) -> None:
+    """Run DONE é sempre 100%: adicionar samples ao dataset depois não a faz regredir."""
+    ds = (await client.post("/v1/datasets", json={"name": "ds"})).json()["id"]
+    sid = (
+        await client.post(
+            f"/v1/datasets/{ds}/samples", json=[{"input": "q0", "expected_output": "a0"}]
+        )
+    ).json()["ids"][0]
+    rid = uuid.uuid4()
+    db_session.add(
+        EvaluationRun(
+            id=rid, dataset_id=uuid.UUID(ds), model="m",
+            judge_type=JudgeType.DETERMINISTIC, status=RunStatus.DONE,
+        )
+    )
+    db_session.add(
+        EvaluationResult(
+            run_id=rid, sample_id=uuid.UUID(sid), actual_output="x", score_overall=0.9
+        )
+    )
+    await db_session.commit()
+
+    # Novo sample DEPOIS de a run concluir: samples_count sobe, results_count não.
+    await client.post(
+        f"/v1/datasets/{ds}/samples", json=[{"input": "q1", "expected_output": "a1"}]
+    )
+
+    assert (await client.get(f"/v1/evaluations/{rid}")).json()["progress"] == 1.0
+    listed = (await client.get("/v1/evaluations")).json()
+    assert next(r for r in listed if r["id"] == str(rid))["progress"] == 1.0
+
+
+async def test_create_evaluation_rejects_blank_model(
+    client: AsyncClient, mock_runner: None
+) -> None:
+    """`model` vazio/só-espaços é rejeitado (422): criaria uma run que falha em toda sample."""
+    dataset_id = await _create_dataset(client)
+    for bad in ("", "   "):
+        resp = await client.post(
+            "/v1/evaluations",
+            json={"dataset_id": dataset_id, "model": bad, "judge_type": "llm"},
+        )
+        assert resp.status_code == 422, resp.text
