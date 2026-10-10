@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response, status
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -30,8 +30,19 @@ class EvaluationCreate(BaseModel):
     """Body do POST /v1/evaluations."""
 
     dataset_id: uuid.UUID
-    model: str
+    model: str = Field(min_length=1, max_length=255)
     judge_type: JudgeType
+
+    @field_validator("model")
+    @classmethod
+    def _model_not_blank(cls, value: str) -> str:
+        """`model` é a identidade da run (é o valor enviado ao gateway); vazio ou
+        só-espaços cria uma run que falha em TODA sample — rejeita (422) em vez
+        de consumir a resposta 202 e um ciclo do runner. 255 = largura da coluna."""
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("model não pode ser vazio")
+        return stripped
 
 
 class RunResponse(BaseModel):
@@ -48,8 +59,16 @@ class RunResponse(BaseModel):
     progress: float = 0.0  # 0.0–1.0
 
 
-def _progress(samples_count: int, results_count: int) -> float:
-    """Progresso da run: results/samples (0.0 se não houver samples)."""
+def _progress(status: RunStatus, samples_count: int, results_count: int) -> float:
+    """Progresso da run (0.0–1.0).
+
+    Uma run DONE avaliou TODAS as samples que existiam no momento dela (uma por
+    sample, inclusive erro) — logo é sempre 1.0. Sem isto, adicionar samples ao
+    dataset depois fazia uma run concluída "regredir" para < 1.0 (a barra do
+    frontend voltava de verde para azul), porque `samples_count` é contado ao vivo.
+    """
+    if status == RunStatus.DONE:
+        return 1.0
     if samples_count == 0:
         return 0.0
     return min(1.0, results_count / samples_count)
@@ -151,7 +170,7 @@ async def list_evaluations(
             status=run.status,
             created_at=run.created_at,
             finished_at=run.finished_at,
-            progress=_progress(samples, results),
+            progress=_progress(run.status, samples, results),
         )
         for run, samples, results in rows
     ]
@@ -181,7 +200,7 @@ async def get_evaluation(
         status=run.status,
         created_at=run.created_at,
         finished_at=run.finished_at,
-        progress=_progress(samples or 0, results or 0),
+        progress=_progress(run.status, samples or 0, results or 0),
     )
 
 
