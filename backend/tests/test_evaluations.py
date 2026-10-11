@@ -255,3 +255,29 @@ async def test_create_evaluation_rejects_blank_model(
             json={"dataset_id": dataset_id, "model": bad, "judge_type": "llm"},
         )
         assert resp.status_code == 422, resp.text
+
+
+async def test_list_evaluations_filters_by_dataset_id(
+    client: AsyncClient, db_session, mock_runner: None
+) -> None:
+    """`?dataset_id=` retorna só as runs daquele dataset; sem o filtro, todas."""
+    ds_a = (await client.post("/v1/datasets", json={"name": "a"})).json()["id"]
+    ds_b = (await client.post("/v1/datasets", json={"name": "b"})).json()["id"]
+    a_id, b_id = uuid.UUID(int=11), uuid.UUID(int=12)
+    db_session.add(
+        EvaluationRun(
+            id=a_id, dataset_id=uuid.UUID(ds_a), model="m", judge_type=JudgeType.DETERMINISTIC
+        )
+    )
+    db_session.add(
+        EvaluationRun(
+            id=b_id, dataset_id=uuid.UUID(ds_b), model="m", judge_type=JudgeType.DETERMINISTIC
+        )
+    )
+    await db_session.commit()
+
+    filtered = (await client.get("/v1/evaluations", params={"dataset_id": ds_a})).json()
+    assert [r["id"] for r in filtered] == [str(a_id)]
+
+    all_runs = (await client.get("/v1/evaluations")).json()
+    assert {r["id"] for r in all_runs} == {str(a_id), str(b_id)}
