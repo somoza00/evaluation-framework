@@ -123,7 +123,7 @@ async def get_results(
         await session.execute(
             select(EvaluationResult)
             .where(EvaluationResult.run_id == run_id)
-            .order_by(EvaluationResult.id)
+            .order_by(EvaluationResult.created_at, EvaluationResult.id)
             .limit(limit)
             .offset(offset)
         )

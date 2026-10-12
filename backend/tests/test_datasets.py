@@ -5,6 +5,7 @@ import uuid
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.dataset import Sample
 from app.models.evaluation import EvaluationRun, JudgeType, RunStatus
 
 
@@ -154,10 +155,35 @@ async def test_list_samples_paginated(client: AsyncClient) -> None:
     assert body["total"] == 3
     assert body["count"] == 2
     assert len(body["samples"]) == 2
-    # Ordenação é por UUID (id), não por inserção; checa os valores como conjunto.
+    # Ordem é por created_at (a ordem exata da 1ª página é provada em
+    # test_list_samples_orders_by_created_at); aqui checa os valores como conjunto.
     inputs = {s["input"] for s in body["samples"]}
     assert inputs <= {"q0", "q1", "q2"}
     assert all("expected_output" in s and isinstance(s["expected_output"], str) for s in body["samples"])
+
+
+async def test_list_samples_orders_by_created_at(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Samples saem na ordem de created_at, não na ordem aleatória do id (uuid4)."""
+    from datetime import UTC, datetime
+
+    created = await client.post("/v1/datasets", json={"name": "ds-ord", "description": ""})
+    dataset_id = created.json()["id"]
+    ds_id = uuid.UUID(dataset_id)
+
+    base = datetime(2026, 1, 1, tzinfo=UTC).replace(tzinfo=None)
+    # Insere FORA da ordem de created_at para provar que a ordenação usa created_at.
+    plan = [("c", base.replace(microsecond=3)), ("a", base.replace(microsecond=1)),
+            ("b", base.replace(microsecond=2))]
+    for text, ts in plan:
+        db_session.add(
+            Sample(dataset_id=ds_id, input=text, expected_output="x", created_at=ts)
+        )
+    await db_session.commit()
+
+    got = (await client.get(f"/v1/datasets/{dataset_id}/samples")).json()["samples"]
+    assert [s["input"] for s in got] == ["a", "b", "c"]
 
 
 async def test_list_samples_404_when_dataset_missing(client: AsyncClient) -> None:

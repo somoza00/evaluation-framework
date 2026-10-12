@@ -121,3 +121,36 @@ async def test_compare_deduplicates_duplicate_run_ids(
     assert response.status_code == 200, response.text
     got = [r["run_id"] for r in response.json()["runs"]]
     assert got == [run_id]
+
+
+async def test_results_ordered_by_created_at(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Resultados saem na ordem de created_at (ordem de avaliação), não do id (uuid4)."""
+    from datetime import UTC, datetime
+
+    created = await client.post("/v1/datasets", json={"name": "ds-ord", "description": ""})
+    dataset_id = created.json()["id"]
+    sample_ids = (
+        await client.post(
+            f"/v1/datasets/{dataset_id}/samples",
+            json=[{"input": f"q{i}", "expected_output": f"a{i}"} for i in range(3)],
+        )
+    ).json()["ids"]
+    run_id = await _make_run(db_session, dataset_id)
+
+    base = datetime(2026, 1, 1, tzinfo=UTC).replace(tzinfo=None)
+    plan = [(sample_ids[0], base.replace(microsecond=2), "segundo"),
+            (sample_ids[1], base.replace(microsecond=1), "primeiro"),
+            (sample_ids[2], base.replace(microsecond=3), "terceiro")]
+    for sid, ts, out in plan:
+        db_session.add(
+            EvaluationResult(
+                run_id=uuid.UUID(run_id), sample_id=uuid.UUID(sid),
+                actual_output=out, score_overall=0.5, created_at=ts,
+            )
+        )
+    await db_session.commit()
+
+    got = (await client.get(f"/v1/results/{run_id}")).json()["results"]
+    assert [r["actual_output"] for r in got] == ["primeiro", "segundo", "terceiro"]
