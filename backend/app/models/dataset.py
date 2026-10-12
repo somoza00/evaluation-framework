@@ -39,5 +39,8 @@ class Sample(Base):
     # Atributo metadata_ porque "metadata" é reservado pelo SQLAlchemy
     # (Base.metadata); a coluna no banco continua chamando "metadata".
     metadata_: Mapped[dict[str, Any]] = mapped_column("metadata", JSONB, default=dict)
+    # `id` é uuid4 (aleatório): ORDER BY id embaralhava a listagem de samples.
+    # created_at dá uma ordem estável (tiebreak por id no mesmo instante).
+    created_at: Mapped[datetime] = mapped_column(default=utcnow_naive)
 
     dataset: Mapped["Dataset"] = relationship(back_populates="samples")

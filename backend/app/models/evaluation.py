@@ -79,5 +79,8 @@ class EvaluationResult(Base):
     judge_reasoning: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Coluna "metadata" no banco; atributo metadata_ (ver dataset.py).
     metadata_: Mapped[dict[str, Any]] = mapped_column("metadata", JSONB, default=dict)
+    # `id` é uuid4 (aleatório): ORDER BY id embaralhava a tabela de resultados.
+    # created_at preserva a ordem de avaliação (tiebreak por id no mesmo instante).
+    created_at: Mapped[datetime] = mapped_column(default=utcnow_naive)
 
     run: Mapped["EvaluationRun"] = relationship(back_populates="results")

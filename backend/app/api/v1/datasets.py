@@ -187,7 +187,7 @@ async def list_samples(
         await session.execute(
             select(Sample)
             .where(Sample.dataset_id == dataset_id)
-            .order_by(Sample.id)
+            .order_by(Sample.created_at, Sample.id)
             .limit(limit)
             .offset(offset)
         )
