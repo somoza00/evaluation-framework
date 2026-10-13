@@ -10,7 +10,7 @@ services:
       POSTGRES_PASSWORD: eval
       POSTGRES_DB: evaluation
     ports:
-      # 5433 no host para não conflitar com Postgres locais (ex: stack Argos)
+      # 5433 no host para não conflitar com Postgres locais (ex: projetos locais)
       - "5433:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
