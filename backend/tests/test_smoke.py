@@ -18,7 +18,7 @@ def test_app_imports() -> None:
 
 
 def test_cors_covers_all_api_methods() -> None:
-    """Todo método HTTP exposto (GET/POST/DELETE) está liberado no CORS."""
+    """Todo método HTTP exposto está liberado no CORS."""
     methods = {m.upper() for p in app.openapi()["paths"].values() for m in p}
     allow = next(
         m.kwargs["allow_methods"] for m in app.user_middleware if m.cls is CORSMiddleware

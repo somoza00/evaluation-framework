@@ -39,6 +39,28 @@ class DatasetCreate(BaseModel):
         return stripped
 
 
+class DatasetUpdate(BaseModel):
+    """Body do PATCH /v1/datasets/{id} — edição PARCIAL de name/description.
+
+    Campos omitidos ficam inalterados (patch semântico); `name` em branco é
+    rejeitado (422), como na criação.
+    """
+
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    description: str | None = Field(default=None, max_length=5_000)
+
+    @field_validator("name")
+    @classmethod
+    def _name_not_blank(cls, value: str | None) -> str | None:
+        """Nome é o identificador exibível; rejeita vazio/só espaços (422)."""
+        if value is None:
+            return None
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("name não pode ser vazio")
+        return stripped
+
+
 class SampleCreate(BaseModel):
     """Item do body (lista) do POST /v1/datasets/{id}/samples."""
 
@@ -208,6 +230,38 @@ async def list_samples(
             for sample in samples
         ],
     }
+
+
+@router.patch("/{dataset_id}", response_model=DatasetResponse)
+async def update_dataset(
+    dataset_id: uuid.UUID,
+    payload: DatasetUpdate,
+    session: AsyncSession = Depends(get_session),
+) -> DatasetResponse:
+    """Edita name/description de um dataset (parcial); 404 se não existir.
+
+    Devolve o dataset atualizado com o `samples_count`, para o cliente manter a
+    lista coerente sem refazer um GET.
+    """
+    dataset = await session.get(Dataset, dataset_id)
+    if dataset is None:
+        raise HTTPException(status_code=404, detail="dataset não encontrado")
+    if payload.name is not None:
+        dataset.name = payload.name
+    if payload.description is not None:
+        dataset.description = payload.description
+    await session.commit()
+    await session.refresh(dataset)
+    count = await session.scalar(
+        select(func.count(Sample.id)).where(Sample.dataset_id == dataset_id)
+    )
+    return DatasetResponse(
+        id=dataset.id,
+        name=dataset.name,
+        description=dataset.description,
+        created_at=dataset.created_at,
+        samples_count=count or 0,
+    )
 
 
 @router.delete("/{dataset_id}", status_code=status.HTTP_204_NO_CONTENT)

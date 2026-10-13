@@ -190,3 +190,33 @@ async def test_list_samples_404_when_dataset_missing(client: AsyncClient) -> Non
     """Listar samples de dataset inexistente retorna 404."""
     response = await client.get(f"/v1/datasets/{uuid.uuid4()}/samples")
     assert response.status_code == 404
+
+
+async def test_update_dataset_is_partial(client: AsyncClient) -> None:
+    """PATCH /v1/datasets/{id} edita só os campos enviados e persiste."""
+    created = await client.post("/v1/datasets", json={"name": "antes", "description": "d1"})
+    dataset_id = created.json()["id"]
+
+    resp = await client.patch(f"/v1/datasets/{dataset_id}", json={"name": "depois"})
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["name"] == "depois"
+    assert body["description"] == "d1"  # não enviado => inalterado
+    assert body["samples_count"] == 0
+
+    got = (await client.get(f"/v1/datasets/{dataset_id}")).json()
+    assert got["name"] == "depois"
+    assert got["description"] == "d1"
+
+
+async def test_update_dataset_404_when_missing(client: AsyncClient) -> None:
+    resp = await client.patch(f"/v1/datasets/{uuid.uuid4()}", json={"name": "x"})
+    assert resp.status_code == 404
+
+
+async def test_update_dataset_rejects_blank_name(client: AsyncClient) -> None:
+    created = await client.post("/v1/datasets", json={"name": "ds", "description": ""})
+    dataset_id = created.json()["id"]
+
+    resp = await client.patch(f"/v1/datasets/{dataset_id}", json={"name": "   "})
+    assert resp.status_code == 422
