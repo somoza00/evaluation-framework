@@ -281,3 +281,65 @@ async def test_list_evaluations_filters_by_dataset_id(
 
     all_runs = (await client.get("/v1/evaluations")).json()
     assert {r["id"] for r in all_runs} == {str(a_id), str(b_id)}
+
+
+# --- Retry de uma run (POST /v1/evaluations/{id}/retry) ---
+
+
+async def test_retry_resets_run_clears_results_and_redispatches(
+    client: AsyncClient, db_session, mock_runner: None
+) -> None:
+    """Retry: limpa resultados parciais, volta a PENDING e reagenda o runner."""
+    ds = (await client.post("/v1/datasets", json={"name": "ds"})).json()["id"]
+    sid = (
+        await client.post(
+            f"/v1/datasets/{ds}/samples", json=[{"input": "q", "expected_output": "a"}]
+        )
+    ).json()["ids"][0]
+    rid = uuid.uuid4()
+    db_session.add(
+        EvaluationRun(
+            id=rid, dataset_id=uuid.UUID(ds), model="m",
+            judge_type=JudgeType.DETERMINISTIC, status=RunStatus.FAILED,
+            finished_at=datetime(2026, 1, 1, tzinfo=UTC),
+        )
+    )
+    db_session.add(
+        EvaluationResult(
+            run_id=rid, sample_id=uuid.UUID(sid), actual_output="x", score_overall=0.1
+        )
+    )
+    await db_session.commit()
+
+    resp = await client.post(f"/v1/evaluations/{rid}/retry")
+    assert resp.status_code == 202, resp.text
+    body = resp.json()
+    assert body["status"] == "pending"
+    assert body["finished_at"] is None
+    assert body["progress"] == 0.0
+
+    assert (await client.get(f"/v1/evaluations/{rid}")).json()["status"] == "pending"
+    assert (await client.get(f"/v1/results/{rid}")).json()["total"] == 0
+
+
+async def test_retry_409_when_running(
+    client: AsyncClient, db_session, mock_runner: None
+) -> None:
+    """Uma run RUNNING não pode ser re-disparada (duplicaria o trabalho)."""
+    ds = (await client.post("/v1/datasets", json={"name": "ds"})).json()["id"]
+    rid = uuid.uuid4()
+    db_session.add(
+        EvaluationRun(
+            id=rid, dataset_id=uuid.UUID(ds), model="m",
+            judge_type=JudgeType.DETERMINISTIC, status=RunStatus.RUNNING,
+        )
+    )
+    await db_session.commit()
+
+    resp = await client.post(f"/v1/evaluations/{rid}/retry")
+    assert resp.status_code == 409
+
+
+async def test_retry_404_when_missing(client: AsyncClient, mock_runner: None) -> None:
+    resp = await client.post(f"/v1/evaluations/{uuid.uuid4()}/retry")
+    assert resp.status_code == 404

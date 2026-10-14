@@ -181,6 +181,47 @@ async def list_evaluations(
     ]
 
 
+@router.post("/{run_id}/retry", status_code=202, response_model=RunResponse)
+async def retry_evaluation(
+    run_id: uuid.UUID,
+    background_tasks: BackgroundTasks,
+    session: AsyncSession = Depends(get_session),
+) -> RunResponse:
+    """Re-dispara uma run que falhou (ou ficou presa em PENDING).
+
+    Limpa os resultados parciais e volta a run para PENDING antes de reagendar o
+    runner — sem isso, reprocessar as mesmas samples violaria a unique constraint
+    `(run_id, sample_id)`. 404 se não existir; 409 se a run estiver RUNNING (já há
+    um runner trabalhando nela: um retry duplicaria o trabalho).
+    """
+    run = await session.get(EvaluationRun, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="run não encontrada")
+    if run.status == RunStatus.RUNNING:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="run em execução; aguarde terminar antes de tentar de novo",
+        )
+
+    await session.execute(delete(EvaluationResult).where(EvaluationResult.run_id == run_id))
+    run.status = RunStatus.PENDING
+    run.finished_at = None
+    await session.commit()
+    await session.refresh(run)
+
+    background_tasks.add_task(_run_background, run.id)
+    return RunResponse(
+        id=run.id,
+        dataset_id=run.dataset_id,
+        model=run.model,
+        judge_type=run.judge_type,
+        status=run.status,
+        created_at=run.created_at,
+        finished_at=run.finished_at,
+        progress=0.0,
+    )
+
+
 @router.get("/{run_id}", response_model=RunResponse)
 async def get_evaluation(
     run_id: uuid.UUID,
