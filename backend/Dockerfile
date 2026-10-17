@@ -1,6 +1,6 @@
 # Pinado por digest (não por tag flutuante como "3.11-slim") — Dependabot
 # mantém isso atualizado automaticamente (ver .github/dependabot.yml).
-FROM python:3.14-slim@sha256:cad9a2c871761c413caa6fdd6441c783451e740a48aaeba60ae62a8b53525ef6
+FROM python:3.14-slim@sha256:a2b82f3c48559aa0a8446d9af49826b6e2b2016f4cd2afabfe6013ec53729170
 WORKDIR /app
 COPY pyproject.toml .
 COPY app/ app/
