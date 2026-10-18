@@ -343,3 +343,29 @@ async def test_retry_409_when_running(
 async def test_retry_404_when_missing(client: AsyncClient, mock_runner: None) -> None:
     resp = await client.post(f"/v1/evaluations/{uuid.uuid4()}/retry")
     assert resp.status_code == 404
+
+
+async def test_list_evaluations_filters_by_judge_type(
+    client: AsyncClient, db_session, mock_runner: None
+) -> None:
+    """`?judge_type=` separa runs deterministicas das com LLM judge."""
+    ds = (await client.post("/v1/datasets", json={"name": "ds"})).json()["id"]
+    det_id, llm_id = uuid.uuid4(), uuid.uuid4()
+    db_session.add(
+        EvaluationRun(
+            id=det_id, dataset_id=uuid.UUID(ds), model="m",
+            judge_type=JudgeType.DETERMINISTIC,
+        )
+    )
+    db_session.add(
+        EvaluationRun(
+            id=llm_id, dataset_id=uuid.UUID(ds), model="m", judge_type=JudgeType.LLM
+        )
+    )
+    await db_session.commit()
+
+    filtered = (await client.get("/v1/evaluations", params={"judge_type": "deterministic"})).json()
+    assert [r["id"] for r in filtered] == [str(det_id)]
+
+    everything = (await client.get("/v1/evaluations")).json()
+    assert {r["id"] for r in everything} == {str(det_id), str(llm_id)}
