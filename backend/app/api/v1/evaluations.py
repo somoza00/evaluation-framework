@@ -130,12 +130,16 @@ async def list_evaluations(
     dataset_id: Annotated[
         uuid.UUID | None, Query(description="Filtra runs por dataset.")
     ] = None,
+    judge_type: Annotated[
+        JudgeType | None, Query(description="Filtra runs por tipo de juiz.")
+    ] = None,
     session: AsyncSession = Depends(get_session),
 ) -> list[RunResponse]:
     """Lista runs com progresso (results_count / samples_count), paginado.
 
     `status` (opcional) filtra por pending/running/done/failed; `model`
-    (opcional) por modelo exato; `dataset_id` (opcional) por dataset.
+    (opcional) por modelo exato; `dataset_id` (opcional) por dataset;
+    `judge_type` (opcional) por tipo de juiz (deterministic/llm/both).
     """
     samples_sq = (
         select(func.count(Sample.id))
@@ -165,6 +169,8 @@ async def list_evaluations(
         stmt = stmt.where(EvaluationRun.model == model)
     if dataset_id is not None:
         stmt = stmt.where(EvaluationRun.dataset_id == dataset_id)
+    if judge_type is not None:
+        stmt = stmt.where(EvaluationRun.judge_type == judge_type)
     rows = (await session.execute(stmt)).all()
     return [
         RunResponse(
