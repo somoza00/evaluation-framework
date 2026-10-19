@@ -220,3 +220,16 @@ async def test_update_dataset_rejects_blank_name(client: AsyncClient) -> None:
 
     resp = await client.patch(f"/v1/datasets/{dataset_id}", json={"name": "   "})
     assert resp.status_code == 422
+
+
+async def test_list_datasets_searches_by_name(client: AsyncClient) -> None:
+    """`?q=` busca no nome (case-insensitive) — antes só dava para listar tudo."""
+    await client.post("/v1/datasets", json={"name": "Alpha QA"})
+    await client.post("/v1/datasets", json={"name": "Beta RAG"})
+
+    resp = await client.get("/v1/datasets", params={"q": "alpha"})
+    assert resp.status_code == 200, resp.text
+    assert [d["name"] for d in resp.json()] == ["Alpha QA"]
+
+    everything = (await client.get("/v1/datasets")).json()
+    assert {d["name"] for d in everything} == {"Alpha QA", "Beta RAG"}

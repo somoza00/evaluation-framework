@@ -136,19 +136,25 @@ async def add_samples(
 async def list_datasets(
     limit: Annotated[int, Query(ge=1, le=_MAX_PAGE_SIZE)] = _DEFAULT_PAGE_SIZE,
     offset: Annotated[int, Query(ge=0)] = 0,
+    q: Annotated[
+        str | None, Query(max_length=120, description="Busca por nome (case-insensitive).")
+    ] = None,
     session: AsyncSession = Depends(get_session),
 ) -> list[DatasetResponse]:
-    """Lista datasets com contagem de samples (paginado: limit/offset)."""
-    rows = (
-        await session.execute(
-            select(Dataset, func.count(Sample.id).label("samples_count"))
-            .outerjoin(Sample, Sample.dataset_id == Dataset.id)
-            .group_by(Dataset.id)
-            .order_by(Dataset.created_at.desc(), Dataset.id.desc())
-            .limit(limit)
-            .offset(offset)
-        )
-    ).all()
+    """Lista datasets com contagem de samples (paginado: limit/offset).
+
+    `q` (opcional) filtra pelo nome, case-insensitive e por substring — evita
+    trazer a lista inteira para achar um dataset no seletor.
+    """
+    stmt = (
+        select(Dataset, func.count(Sample.id).label("samples_count"))
+        .outerjoin(Sample, Sample.dataset_id == Dataset.id)
+        .group_by(Dataset.id)
+        .order_by(Dataset.created_at.desc(), Dataset.id.desc())
+    )
+    if q is not None and q.strip():
+        stmt = stmt.where(Dataset.name.ilike(f"%{q.strip()}%"))
+    rows = (await session.execute(stmt.limit(limit).offset(offset))).all()
     return [
         DatasetResponse(
             id=dataset.id,
