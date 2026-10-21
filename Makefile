@@ -1,6 +1,6 @@
 # Atalhos de desenvolvimento espelhando o CI (.github/workflows/ci.yml).
 # Uso: make config | make lint | make test | make up ...
-.PHONY: config up down build venv lint test frontend-build
+.PHONY: config up down build venv lint test frontend-build audit
 
 config: ## Valida o docker-compose (sem subir nada)
 	docker compose config -q
@@ -25,3 +25,12 @@ test: ## Gate do backend (ruff + mypy + pytest; env minimo p/ o Settings importa
 
 frontend-build: ## Builda o frontend (npm ci + build, como no CI)
 	cd frontend && npm ci && npm run build
+
+# Espelha o job `dependency-audit` do CI: pip-audit quebra o build quando há
+# CVE conhecida nas deps Python resolvidas. Não é dev-dependency (o CI instala
+# na hora), por isso o alvo faz o mesmo antes de varrer — sem isso, o CVE só
+# aparecia depois do push. --skip-editable: o próprio pacote local não existe
+# no PyPI para ser auditado.
+audit: ## Varredura de CVE nas deps do backend (espelha o job dependency-audit do CI)
+	cd backend && .venv/bin/pip install "pip-audit>=2.7.0" "setuptools>=83.0.0" \
+		&& .venv/bin/pip-audit --skip-editable
