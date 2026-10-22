@@ -29,7 +29,7 @@ evaluation-framework/
 │   └── src/
 │       ├── components/ # DatasetUpload, RunEvaluation, ResultsTable, ModelComparison
 │       └── pages/      # Datasets, Evaluations, Results
-├── docker-compose.yml  # db (5433), backend (8001), frontend (5174)
+├── docker-compose.yml  # db (5434), backend (8001), frontend (5174)
 └── .github/workflows/  # CI: ruff + mypy + pytest / tsc + vite build
 ```
 
@@ -41,7 +41,9 @@ docker compose up --build
 
 - Frontend: http://localhost:5174
 - Backend API: http://localhost:8001 (docs em /docs)
-- Postgres: `localhost:5433` no host (`db:5432` na rede interna)
+- Postgres: `localhost:5434` no host (`db:5432` na rede interna). A 5434 (e não
+  5433) evita o choque com o Postgres do `myown-llm-gateway`, que roda junto —
+  o gateway é o judge LLM. Ajuste com `EVAL_DB_PORT` no `.env`.
 
 Para o backend rodando local (fora do compose), crie `backend/.env` a partir do
 `.env.example` da raiz — **nunca commitar `.env`**.
@@ -50,7 +52,7 @@ Para o backend rodando local (fora do compose), crie `backend/.env` a partir do
 
 | Variável | Descrição | Default (dev) |
 |---|---|---|
-| `DATABASE_URL` | connection string asyncpg | `postgresql+asyncpg://eval:eval@localhost:5433/evaluation` (porta 5433 é a publicada pelo compose no host) |
+| `DATABASE_URL` | connection string asyncpg | `postgresql+asyncpg://eval:eval@localhost:5434/evaluation` (porta 5434 é a publicada pelo compose no host) |
 | `GATEWAY_URL` | URL do myown-llm-gateway | `http://localhost:8000` |
 | `GATEWAY_API_KEY` | chave virtual do gateway | `sk-local` |
 | `JUDGE_MODEL` | modelo usado como judge | `deepseek/deepseek-chat` |
