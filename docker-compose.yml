@@ -10,8 +10,12 @@ services:
       POSTGRES_PASSWORD: eval
       POSTGRES_DB: evaluation
     ports:
-      # 5433 no host para não conflitar com Postgres locais (ex: projetos locais)
-      - "5433:5432"
+      # 5434 no host (não 5433): o stack irmão myown-llm-gateway publica o
+      # Postgres DELE na 5433 do host, e os dois rodam juntos — o gateway é o
+      # judge LLM (GATEWAY_URL=http://host.docker.internal:8000). Na 5433 este
+      # container nem subia: "Bind for 0.0.0.0:5433 failed: port is already
+      # allocated". Sobrescreva com EVAL_DB_PORT no .env se precisar.
+      - "${EVAL_DB_PORT:-5434}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
