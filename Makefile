@@ -1,6 +1,6 @@
 # Atalhos de desenvolvimento espelhando o CI (.github/workflows/ci.yml).
 # Uso: make config | make lint | make test | make up ...
-.PHONY: config up down build venv lint test frontend-build audit
+.PHONY: config up down build venv lint test frontend-build audit migrate-smoke
 
 config: ## Valida o docker-compose (sem subir nada)
 	docker compose config -q
@@ -34,3 +34,20 @@ frontend-build: ## Builda o frontend (npm ci + build, como no CI)
 audit: ## Varredura de CVE nas deps do backend (espelha o job dependency-audit do CI)
 	cd backend && .venv/bin/pip install "pip-audit>=2.7.0" "setuptools>=83.0.0" \
 		&& .venv/bin/pip-audit --skip-editable
+
+# Espelha o job `migrations` do CI: aplica e desfaz TODAS as migrations contra um
+# Postgres de verdade. As migrations usam JSONB, então SQLite (o que o `make
+# test` usa) não serve. Roda numa database descartável no Postgres do compose,
+# então a base de dev (`evaluation`) não é tocada — exige `docker compose up -d
+# db` antes. Sem isto, um erro de revision/DDL só aparecia no startup do
+# container, com o serviço fora do ar no deploy.
+EVAL_DB_PORT ?= 5434
+MIGRATE_SMOKE_DB ?= eval_migsmoke
+MIGRATE_SMOKE_URL ?= postgresql+asyncpg://eval:eval@localhost:$(EVAL_DB_PORT)/$(MIGRATE_SMOKE_DB)
+MIGRATE_SMOKE_ENV = DATABASE_URL="$(MIGRATE_SMOKE_URL)" GATEWAY_URL=http://localhost:8000 GATEWAY_API_KEY=ci-test JUDGE_MODEL=deepseek/deepseek-chat
+
+migrate-smoke: ## Aplica e desfaz as migrations num Postgres descartável (espelha o job migrations do CI)
+	docker compose exec -T db psql -U eval -d evaluation -c "DROP DATABASE IF EXISTS $(MIGRATE_SMOKE_DB);"
+	docker compose exec -T db psql -U eval -d evaluation -c "CREATE DATABASE $(MIGRATE_SMOKE_DB);"
+	cd backend && $(MIGRATE_SMOKE_ENV) .venv/bin/alembic upgrade head
+	cd backend && $(MIGRATE_SMOKE_ENV) .venv/bin/alembic downgrade base

@@ -106,7 +106,7 @@ GET  /v1/results/compare?runs=id1,id2
 - `evaluation_results`: id, run_id, sample_id, actual_output, scores, judge_reasoning, metadata (jsonb)
 
 ## Desenvolvimento (Makefile)
-O repo tem um `Makefile` que espelha o CI: `make config` (valida o compose), `make venv` (cria o `.venv` do backend), `make lint` (ruff+mypy), `make test` (ruff+mypy+pytest, já injeta o env mínimo que o `Settings` exige) e `make frontend-build` (npm ci + build).
+O repo tem um `Makefile` que espelha o CI: `make config` (valida o compose), `make venv` (cria o `.venv` do backend), `make lint` (ruff+mypy), `make test` (ruff+mypy+pytest, já injeta o env mínimo que o `Settings` exige), `make migrate-smoke` (aplica e desfaz as migrations num Postgres descartável, como o job `migrations` do CI) e `make frontend-build` (npm ci + build).
 
 ## Manutenção recente
 Melhorias de robustez/ops aplicadas: container **non-root** (backend e
