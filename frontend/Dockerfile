@@ -5,7 +5,11 @@
 FROM node:26-slim@sha256:ec7758ee051e457b468b32bde57b0879010b325bb9862718e9615225ce4aaae1
 WORKDIR /app
 COPY package*.json ./
-RUN npm install
+# `npm ci` (não `npm install`): o package-lock.json está commitado e é o que o
+# CI/CD usam (`npm ci` falha se o lock estiver dessincronizado do package.json).
+# Com `npm install`, a imagem podia resolver versões diferentes das do CI — ou
+# reescrever o lock — e o build passava enquanto o CI quebrava, ou vice-versa.
+RUN npm ci
 COPY . .
 RUN chown -R node:node /app
 USER node
