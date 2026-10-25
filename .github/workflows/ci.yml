@@ -5,6 +5,18 @@ on:
     branches: [main]
   pull_request:
 
+# Least privilege: o GITHUB_TOKEN deste workflow herda o default da organização
+# (que pode ser leitura/escrita em contents). A CI só faz checkout e roda
+# lint/types/testes/scan — nada escreve no repositório, publica pacote ou cria
+# release. Sem este bloco, um passo comprometido (uma action de terceiro, um
+# `npm ci` com postinstall malicioso) teria o token com permissão de escrita
+# para commitar/pushar na main. Mesmo bloco já usado no CI do
+# study-memory-agent. Os jobs que PRECISAM de mais (o CD, com id-token: write
+# para o Workload Identity Federation) declaram as próprias permissões no
+# job — workflow_run não herda este bloco.
+permissions:
+  contents: read
+
 jobs:
   backend:
     runs-on: ubuntu-latest
