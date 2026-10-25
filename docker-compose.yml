@@ -43,7 +43,12 @@ services:
       GATEWAY_API_KEY: ${GATEWAY_API_KEY:?defina GATEWAY_API_KEY no .env (raiz) — ver .env.example}
       JUDGE_MODEL: ${JUDGE_MODEL:-deepseek/deepseek-chat}
     ports:
-      - "8001:8001"
+      # 8001 no host, sobrescrevível por EVAL_BACKEND_PORT: o stack irmão
+      # study-memory-agent publica a MESMA 8001 (e a 5174 no frontend) — rodar
+      # os dois juntos dava "Bind for 0.0.0.0:8001 failed: port is already
+      # allocated", o mesmo problema que motivou a 5434 do Postgres abaixo.
+      # Com a variável basta `EVAL_BACKEND_PORT=8002 docker compose up -d`.
+      - "${EVAL_BACKEND_PORT:-8001}:8001"
     healthcheck:
       # A imagem já define HEALTHCHECK (ver backend/Dockerfile); repetido
       # aqui só para deixar o intervalo explícito e óbvio no compose.
@@ -71,7 +76,10 @@ services:
       # Proxy do Vite aponta para o backend dentro da rede do compose.
       VITE_PROXY_TARGET: http://backend:8001
     ports:
-      - "5174:5174"
+      # 5174 no host, sobrescrevível por EVAL_FRONTEND_PORT — mesma colisão do
+      # backend acima (o study-memory-agent também publica 5174). Ao trocar,
+      # acrescente a nova origem em CORS_ORIGINS, senão o browser bloqueia.
+      - "${EVAL_FRONTEND_PORT:-5174}:5174"
     healthcheck:
       # O frontend não tinha healthcheck; usa o próprio node (fetch global,
       # sem depender de curl). Se o Vite não responder, fica "unhealthy".
