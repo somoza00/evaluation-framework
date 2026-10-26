@@ -15,7 +15,16 @@ services:
       # judge LLM (GATEWAY_URL=http://host.docker.internal:8000). Na 5433 este
       # container nem subia: "Bind for 0.0.0.0:5433 failed: port is already
       # allocated". Sobrescreva com EVAL_DB_PORT no .env se precisar.
-      - "${EVAL_DB_PORT:-5434}:5432"
+      #
+      # 127.0.0.1: o Postgres usa credencial de dev fixa (eval/eval) e não tem
+      # TLS. Publicado em 0.0.0.0 ele ficava alcançável por qualquer máquina
+      # da rede local (o host é um laptop que troca de WiFi) — com uma senha
+      # que está no próprio README. Os stacks irmãos já publicam as
+      # dependências deles só no loopback (gateway: 5433/6379; study: 6333);
+      # aqui a regra não valia para o banco. O backend fala com `db:5432` pela
+      # rede interna, então o publish só serve a ferramentas locais — psql,
+      # alembic, `make migrate-smoke` — e `localhost:5434` continua igual.
+      - "127.0.0.1:${EVAL_DB_PORT:-5434}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:

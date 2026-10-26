@@ -43,7 +43,10 @@ docker compose up --build
 - Backend API: http://localhost:8001 (docs em /docs)
 - Postgres: `localhost:5434` no host (`db:5432` na rede interna). A 5434 (e não
   5433) evita o choque com o Postgres do `myown-llm-gateway`, que roda junto —
-  o gateway é o judge LLM. Ajuste com `EVAL_DB_PORT` no `.env`.
+  o gateway é o judge LLM. Ajuste com `EVAL_DB_PORT` no `.env`. O publish é só
+  em **`127.0.0.1`**: as credenciais de dev são fixas (`eval`/`eval`) e não há
+  TLS, então nada de expor o banco para a rede local; `psql`/`alembic` em
+  `localhost` continuam funcionando.
 
 Para o backend rodando local (fora do compose), crie `backend/.env` a partir do
 `.env.example` da raiz — **nunca commitar `.env`**.
