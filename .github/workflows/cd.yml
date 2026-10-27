@@ -11,6 +11,18 @@ on:
     types: [completed]
     branches: [main]
 
+# Um merge na main = um deploy. Dois merges próximos disparam dois
+# `workflow_run` independentes, e o GitHub não garante a ordem em que eles
+# começam/terminam: o deploy da revisão MAIS ANTIGA podia concluir depois do
+# mais novo e ficar no ar — um rollback silencioso de produção, sem ninguém
+# pedir. O grupo fixo serializa: um deploy por vez, na ordem de chegada.
+# `cancel-in-progress: false` de propósito: cancelar um deploy no meio (Cloud
+# Run atualizando / Pages publicando) deixa o ambiente num estado ambíguo;
+# esperar na fila é o comportamento seguro.
+concurrency:
+  group: cd-main
+  cancel-in-progress: false
+
 jobs:
   deploy-backend:
     if: github.event.workflow_run.conclusion == 'success'
