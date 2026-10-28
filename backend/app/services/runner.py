@@ -98,11 +98,27 @@ class EvaluationRunner:
 
             # As chamadas de rede (modelo + judge) rodam concorrentemente;
             # a persistência abaixo é sequencial (AsyncSession não é
-            # thread/task-safe para escrita concorrente).
-            results = await asyncio.gather(*(process(sample) for sample in samples))
-            for result in results:
-                self.session.add(result)
-                await self.session.commit()
+            # thread/task-safe para escrita concorrente) e INCREMENTAL: cada
+            # resultado é gravado assim que a sample termina. Antes um
+            # `asyncio.gather` esperava TODAS as samples para só então commitar,
+            # então uma run de 500 samples que morresse no meio (ou uma falha
+            # estrutural numa sample) descartava todo o trabalho já concluído —
+            # o oposto do "não perde tudo se o processo morrer no meio" prometido
+            # no docstring.
+            pending = {asyncio.create_task(process(sample)) for sample in samples}
+            try:
+                while pending:
+                    done, pending = await asyncio.wait(
+                        pending, return_when=asyncio.FIRST_COMPLETED
+                    )
+                    for task in done:
+                        self.session.add(task.result())
+                        await self.session.commit()
+            finally:
+                # Numa falha estrutural ninguém vai persistir o resultado das
+                # samples ainda em voo: cancela para não ficar chamando modelo.
+                for task in pending:
+                    task.cancel()
 
             run.status = RunStatus.DONE
             run.finished_at = utcnow_naive()

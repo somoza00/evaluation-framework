@@ -230,3 +230,64 @@ async def test_judge_falls_back_to_model_key_when_unset() -> None:
         assert runner.llm_judge.api_key == "model-key"
     finally:
         await runner.close()
+
+
+
+async def test_run_persiste_resultados_parciais_quando_falha_no_meio(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Persistência é POR SAMPLE: o que já terminou sobrevive a uma falha estrutural.
+
+    Regressão: um `asyncio.gather` esperava TODAS as samples para só então
+    commitar, então uma run de 500 samples que morresse no meio (ou uma falha
+    estrutural numa sample) descartava todo o trabalho já concluído — o
+    contrário do "não perde tudo se o processo morrer no meio" documentado.
+    """
+    import asyncio
+
+    run = await _make_run(db_session, JudgeType.DETERMINISTIC, n_samples=3)
+    runner = EvaluationRunner(db_session, settings)
+    real_call = runner._call_model
+    two_commits = asyncio.Event()
+
+    async def flaky_call(model: str, prompt: str) -> str:
+        if prompt == "pergunta 2":
+            # Só falha DEPOIS que dois resultados já foram commitados, para o
+            # teste não depender de timing: é exatamente o caso "morreu no meio".
+            await two_commits.wait()
+            raise RuntimeError("falha estrutural no meio da run")
+        return await real_call(model, prompt)
+
+    real_commit = db_session.commit
+    commits: list[int] = []
+
+    async def counting_commit() -> None:
+        await real_commit()
+        commits.append(1)
+        if len(commits) >= 2:
+            two_commits.set()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+
+    monkeypatch.setattr(runner, "_call_model", flaky_call)
+    monkeypatch.setattr(db_session, "commit", counting_commit)
+    runner.llm_judge.client = httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), base_url="http://test"
+    )
+    try:
+        with pytest.raises(RuntimeError):
+            await runner.run(run.id)
+    finally:
+        await runner.close()
+
+    await db_session.refresh(run)
+    assert run.status == RunStatus.FAILED
+
+    results = (
+        await db_session.execute(select(EvaluationResult).where(EvaluationResult.run_id == run.id))
+    ).scalars().all()
+    # As duas samples que concluíram antes da falha foram persistidas — antes
+    # desta mudança a lista saía vazia (tudo era descartado).
+    assert len(results) == 2
+    assert all(r.actual_output == "ok" for r in results)
