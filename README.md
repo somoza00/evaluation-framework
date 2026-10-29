@@ -68,6 +68,10 @@ Para o backend rodando local (fora do compose), crie `backend/.env` a partir do
 | `TRUST_PROXY_HEADERS` | usa `X-Forwarded-For` (em vez do IP da conexão TCP) no rate limit — só ative atrás de um proxy confiável | `false` |
 | `MAX_REQUEST_BODY_BYTES` | corpo de request além disso leva 413 antes de ser lido | `25000000` |
 | `ORPHANED_RUN_MAX_AGE_SECONDS` | idade mínima pra run presa em `RUNNING` ser marcada `FAILED` no startup | `300` |
+| `REDIS_URL` | Redis pro rate limit **compartilhado** entre workers/réplicas; vazio = limiter em memória (cobre só 1 processo) | _(vazio)_ |
+| `RUN_WORKER_ENABLED` | liga o worker durável que reivindica runs `PENDING` presas (rede de segurança do dispatch); desligue em ambientes onde não se quer o loop | `true` |
+| `RUN_WORKER_MIN_AGE_SECONDS` | idade mínima de uma run `PENDING` para o worker reivindicá-la (evita corrida com o `BackgroundTasks` do request) | `30` |
+| `RUN_WORKER_POLL_SECONDS` | intervalo entre varreduras do worker | `10` |
 
 Se `API_KEY` estiver definida, defina também `VITE_API_KEY` (mesmo valor) para
 o frontend anexar o header `X-API-Key` nas chamadas — ver `.env.example` na
