@@ -69,3 +69,57 @@ async def test_evaluate_malformed_response_returns_none() -> None:
         await judge.close()
 
     assert result["score_overall"] is None
+
+
+def _judge() -> LLMJudge:
+    return LLMJudge(gateway_url="http://test", api_key="k", model="m")
+
+
+def test_parse_score_accepts_unquoted_text() -> None:
+    """Modelo que responde `Score: 4` (sem aspas/JSON) não deve derrubar o judge.
+
+    Antes, o fallback só casava `"score": <int>`: um texto como
+    `Score: 4/5 — Reasoning: boa` levantava ValueError e a sample ficava sem
+    nota (score_overall=None), zerando a média da run sem motivo real.
+    """
+    judge = _judge()
+    score, reasoning = judge._parse_score("Score: 4/5\nReasoning: atende ao pedido")
+    assert score == 4
+    assert reasoning == "atende ao pedido"
+
+
+def test_parse_score_accepts_decimal_and_comma() -> None:
+    """Score decimal (4.5) ou com vírgula (4,5) é truncado para int, não rejeitado."""
+    judge = _judge()
+    assert judge._parse_score('{"score": 4.5, "reasoning": "ok"}')[0] == 4
+    assert judge._parse_score("score: 4,5 — reasoning: ok")[0] == 4
+
+
+def test_parse_score_accepts_numeric_string_in_json() -> None:
+    """JSON válido com score em string ("4.0") também é aceito."""
+    judge = _judge()
+    assert judge._parse_score('{"score": "4.0", "reasoning": "ok"}')[0] == 4
+
+
+def test_parse_score_clamps_out_of_range() -> None:
+    """Score fora de 1-5 é preso na faixa (a normalização assume 1..5)."""
+    judge = _judge()
+    assert judge._parse_score('{"score": 9, "reasoning": "ok"}')[0] == 5
+    assert judge._parse_score('{"score": 0, "reasoning": "ok"}')[0] == 1
+
+
+async def test_evaluate_unquoted_content_still_scores() -> None:
+    """Ponta a ponta: conteúdo solto vira nota normalizada em vez de None."""
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        body = {"choices": [{"message": {"content": "Score: 3 — Reasoning: parcialmente correto"}}]}
+        return httpx.Response(200, json=body)
+
+    judge = _judge_with_transport(httpx.MockTransport(handler))
+    try:
+        result = await judge.evaluate("prompt", "esperado", "atual")
+    finally:
+        await judge.close()
+
+    assert result["score_overall"] == 0.5
+    assert "parcialmente correto" in str(result["judge_reasoning"])
