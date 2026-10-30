@@ -12,8 +12,29 @@ import httpx
 
 from app.services.http_retry import post_with_retry
 
-_SCORE_RE = re.compile(r'"score"\s*:\s*(\d+)')
-_REASONING_RE = re.compile(r'"reasoning"\s*:\s*"([^"]+)"')
+# Fallback tolerante para quando o modelo não devolve JSON estrito (o caso
+# que ele deveria devolver, mas LLM não é contrato): aceita `"score": 4`,
+# `score = 4`, `Score: 4.5` e vírgula decimal (`4,5`). Antes só casava
+# `"score": <int>` — um modelo que respondesse `Score: 4/5` fazia o judge
+# inteiro falhar (score_overall=None) e a run ficava sem nota nenhuma.
+# O lookbehind evita casar uma chave parecida (ex: `"judge_score": 3`).
+_SCORE_RE = re.compile(
+    r"""(?<![A-Za-z0-9_])["']?score["']?\s*[:=]\s*(-?\d+(?:[.,]\d+)?)""",
+    re.IGNORECASE,
+)
+_REASONING_RE = re.compile(
+    r"""(?<![A-Za-z0-9_])["']?reasoning["']?\s*[:=]\s*["']?([^"'}\n]+)""",
+    re.IGNORECASE,
+)
+
+
+def _coerce_score(value: object) -> int:
+    """Converte o score vindo do modelo para int (aceita 4, 4.5, "4", "4.0").
+
+    `int(value)` direto quebrava com float string ("4.0" → ValueError) e com
+    float JSON que o modelo devolvesse como 4.0; float() cobre os dois.
+    """
+    return int(float(str(value).replace(",", ".")))
 
 
 class LLMJudge:
@@ -75,20 +96,24 @@ class LLMJudge:
     def _parse_score(self, content: str) -> tuple[int, str]:
         """Extrai score (1-5) e reasoning do JSON retornado pelo modelo.
 
-        Tenta json.loads primeiro; em caso de texto com ruído (ex: markdown),
-        faz fallback com regex. Levanta ValueError se não conseguir extrair.
+        Tenta json.loads primeiro; em caso de texto com ruído (ex: markdown,
+        `Score: 4` sem aspas), faz fallback com regex. Levanta ValueError se
+        não conseguir extrair.
         """
         try:
             data = json.loads(content)
-            score = int(data["score"])
+            score = _coerce_score(data["score"])
             reasoning = str(data["reasoning"])
-        except (json.JSONDecodeError, KeyError, TypeError):
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+            # ValueError entrou aqui de propósito: JSON válido com score que
+            # não é número (ex: {"score": "alta"}) deve cair no fallback/
+            # ValueError — antes escapava como erro genérico do judge.
             score_match = _SCORE_RE.search(content)
-            reasoning_match = _REASONING_RE.search(content)
+            reasoning_match = _REASONING_RE.search(content.strip().rstrip("}"))
             if score_match is None:
                 raise ValueError(f"resposta do judge sem campo 'score': {content[:200]}")
-            score = int(score_match.group(1))
-            reasoning = reasoning_match.group(1) if reasoning_match else "sem reasoning"
+            score = _coerce_score(score_match.group(1))
+            reasoning = reasoning_match.group(1).strip() if reasoning_match else "sem reasoning"
         return max(1, min(5, score)), reasoning
 
     async def close(self) -> None:
