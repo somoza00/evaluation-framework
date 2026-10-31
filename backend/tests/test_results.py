@@ -1,11 +1,14 @@
 """Testes dos endpoints de results: médias, ordem e dedupe no compare."""
 
+import csv
+import io
 import uuid
 
 import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.v1.results import _CSV_COLUMNS
 from app.models.evaluation import EvaluationResult, EvaluationRun, JudgeType, RunStatus
 
 
@@ -154,3 +157,89 @@ async def test_results_ordered_by_created_at(
 
     got = (await client.get(f"/v1/results/{run_id}")).json()["results"]
     assert [r["actual_output"] for r in got] == ["primeiro", "segundo", "terceiro"]
+
+
+async def test_export_csv_traz_todas_as_samples_com_scores(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """GET /v1/results/{run_id}/export devolve a run inteira em CSV (download)."""
+    created = await client.post("/v1/datasets", json={"name": "ds-export", "description": ""})
+    dataset_id = created.json()["id"]
+    samples = await client.post(
+        f"/v1/datasets/{dataset_id}/samples",
+        json=[
+            {"input": "q0", "expected_output": "a0"},
+            # vírgula e quebra de linha: o CSV precisa citar/quebrar corretamente
+            {"input": 'q1, com vírgula', "expected_output": "linha1\nlinha2"},
+        ],
+    )
+    sample_ids = samples.json()["ids"]
+    run_id = await _make_run(db_session, dataset_id)
+
+    db_session.add(
+        EvaluationResult(
+            run_id=uuid.UUID(run_id),
+            sample_id=uuid.UUID(sample_ids[0]),
+            actual_output="resposta ok",
+            score_overall=0.5,
+            score_fidelity=1.0,
+            score_coherence=0.5,
+            score_instruction=0.0,
+            judge_reasoning="parece bom",
+        )
+    )
+    # Judge falhou nesta sample: score None tem de sair como célula VAZIA
+    # (0,0 seria uma nota legítima e falsearia a média na planilha).
+    db_session.add(
+        EvaluationResult(
+            run_id=uuid.UUID(run_id),
+            sample_id=uuid.UUID(sample_ids[1]),
+            actual_output="",
+            score_overall=None,
+            judge_reasoning="erro ao avaliar via LLM",
+        )
+    )
+    await db_session.commit()
+
+    response = await client.get(f"/v1/results/{run_id}/export")
+    assert response.status_code == 200, response.text
+    assert response.headers["content-type"].startswith("text/csv")
+    assert "attachment" in response.headers["content-disposition"]
+    assert run_id in response.headers["content-disposition"]
+
+    rows = list(csv.reader(io.StringIO(response.text)))
+    assert rows[0] == list(_CSV_COLUMNS)
+    assert len(rows) == 3  # cabeçalho + 2 samples
+
+    first = dict(zip(_CSV_COLUMNS, rows[1], strict=True))
+    assert first["sample_id"] == sample_ids[0]
+    assert first["input"] == "q0"
+    assert first["expected_output"] == "a0"
+    assert first["actual_output"] == "resposta ok"
+    assert first["score_overall"] == "0.5000"
+    assert first["score_fidelity"] == "1.0000"
+    assert first["judge_reasoning"] == "parece bom"
+
+    second = dict(zip(_CSV_COLUMNS, rows[2], strict=True))
+    assert second["input"] == "q1, com vírgula"  # vírgula preservada pelo quoting
+    assert second["expected_output"] == "linha1\nlinha2"
+    assert second["score_overall"] == ""
+    assert second["score_fidelity"] == ""
+
+
+async def test_export_csv_returns_404_for_unknown_run(client: AsyncClient) -> None:
+    response = await client.get(f"/v1/results/{uuid.uuid4()}/export")
+    assert response.status_code == 404
+
+
+async def test_export_csv_of_empty_run_is_header_only(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Run sem resultados ainda exporta o cabeçalho (planilha vazia, não erro)."""
+    created = await client.post("/v1/datasets", json={"name": "ds-vazio", "description": ""})
+    run_id = await _make_run(db_session, created.json()["id"])
+
+    response = await client.get(f"/v1/results/{run_id}/export")
+    assert response.status_code == 200, response.text
+    rows = list(csv.reader(io.StringIO(response.text)))
+    assert rows == [list(_CSV_COLUMNS)]

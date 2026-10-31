@@ -1,10 +1,12 @@
-"""Endpoints de resultados: consulta por run e comparação entre runs."""
+"""Endpoints de resultados: consulta por run, comparação entre runs e export CSV."""
 
+import csv
+import io
 import uuid
 from collections.abc import Sequence
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,6 +18,19 @@ from app.models.evaluation import EvaluationResult, EvaluationRun
 router = APIRouter(prefix="/results", tags=["results"])
 
 _SCORE_FIELDS = ("score_fidelity", "score_coherence", "score_instruction", "score_overall")
+
+# Colunas do CSV exportado (ordem fixa = cabeçalho da planilha).
+_CSV_COLUMNS = (
+    "sample_id",
+    "input",
+    "expected_output",
+    "actual_output",
+    "score_overall",
+    "score_fidelity",
+    "score_coherence",
+    "score_instruction",
+    "judge_reasoning",
+)
 
 
 class ResultResponse(BaseModel):
@@ -97,6 +112,77 @@ async def compare_results(
 
 
 _MAX_PAGE_SIZE = 200
+
+
+def _csv_value(result: EvaluationResult, sample: Sample | None, column: str) -> str:
+    """Valor de uma célula do export, com None como célula vazia e score com 4 casas."""
+    if column in ("input", "expected_output"):
+        return (getattr(sample, column) if sample is not None else None) or ""
+    if column in _SCORE_FIELDS:
+        value = getattr(result, column)
+        return "" if value is None else f"{value:.4f}"
+    if column == "sample_id":
+        return str(result.sample_id)
+    if column == "judge_reasoning":
+        return result.judge_reasoning or ""
+    return str(getattr(result, column))
+
+
+@router.get("/{run_id}/export")
+async def export_results_csv(
+    run_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+) -> Response:
+    """Exporta TODOS os resultados de uma run como CSV (download para planilha).
+
+    O frontend só mostra tabela paginada; para analisar uma run inteira (ou
+    mandar para alguém) não havia caminho sem script. O arquivo traz, por
+    sample: input, saída esperada, saída real, os quatro scores e o reasoning do
+    juiz. Score ausente (falha do judge) fica como célula vazia — não como 0,
+    que viraria nota legítima na média da planilha.
+
+    Não é paginado de propósito: o CSV é o artefato completo da run (500 samples
+    x ~40KB no pior caso continuam sendo alguns MB, servidos numa resposta só).
+    """
+    run = await session.get(EvaluationRun, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="run não encontrada")
+
+    results = (
+        await session.execute(
+            select(EvaluationResult)
+            .where(EvaluationResult.run_id == run_id)
+            .order_by(EvaluationResult.created_at, EvaluationResult.id)
+        )
+    ).scalars().all()
+
+    samples_by_id: dict[uuid.UUID, Sample] = {}
+    if results:
+        samples = (
+            await session.execute(
+                select(Sample).where(Sample.id.in_([r.sample_id for r in results]))
+            )
+        ).scalars().all()
+        samples_by_id = {sample.id: sample for sample in samples}
+
+    buffer = io.StringIO()
+    # `\r\n` (default do csv) é o que Excel/Sheets esperam; o reader dos testes
+    # entende os dois.
+    writer = csv.writer(buffer, lineterminator="\r\n")
+    writer.writerow(_CSV_COLUMNS)
+    for result in results:
+        sample = samples_by_id.get(result.sample_id)
+        writer.writerow([_csv_value(result, sample, column) for column in _CSV_COLUMNS])
+
+    return Response(
+        content=buffer.getvalue(),
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="run-{run_id}.csv"',
+            # O conteúdo depende do banco; proxy/CDN não deve servir um CSV velho.
+            "Cache-Control": "no-store",
+        },
+    )
 
 
 @router.get("/{run_id}")
