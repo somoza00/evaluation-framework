@@ -369,3 +369,46 @@ async def test_list_evaluations_filters_by_judge_type(
 
     everything = (await client.get("/v1/evaluations")).json()
     assert {r["id"] for r in everything} == {str(det_id), str(llm_id)}
+
+
+async def test_failed_run_exposes_failure_reason(
+    client: AsyncClient, db_session, mock_runner: None
+) -> None:
+    """Run FAILED devolve o motivo na API (antes só o status "failed").
+
+    Dataset vazio, erro estrutural no runner e processo morto no meio produziam
+    o mesmo `failed` na listagem: sem `failure_reason` o usuário não tinha como
+    saber o que corrigir (adicionar samples? olhar o gateway? reenfileirar?).
+    """
+    ds = (await client.post("/v1/datasets", json={"name": "ds-reason"})).json()["id"]
+    failed_id = uuid.uuid4()
+    db_session.add(
+        EvaluationRun(
+            id=failed_id,
+            dataset_id=uuid.UUID(ds),
+            model="m",
+            judge_type=JudgeType.DETERMINISTIC,
+            status=RunStatus.FAILED,
+            failure_reason="dataset sem samples: não havia nada a avaliar",
+        )
+    )
+    ok_id = uuid.uuid4()
+    db_session.add(
+        EvaluationRun(
+            id=ok_id,
+            dataset_id=uuid.UUID(ds),
+            model="m",
+            judge_type=JudgeType.DETERMINISTIC,
+            status=RunStatus.DONE,
+        )
+    )
+    await db_session.commit()
+
+    listed = (await client.get("/v1/evaluations")).json()
+    reason_by_id = {r["id"]: r["failure_reason"] for r in listed}
+    assert reason_by_id[str(failed_id)] == "dataset sem samples: não havia nada a avaliar"
+    # Run que não falhou não inventa motivo.
+    assert reason_by_id[str(ok_id)] is None
+
+    detail = (await client.get(f"/v1/evaluations/{failed_id}")).json()
+    assert detail["failure_reason"] == "dataset sem samples: não havia nada a avaliar"

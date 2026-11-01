@@ -36,11 +36,16 @@ async def test_recent_running_run_is_preserved_and_old_one_failed(db_session) ->
 
     await _recover_orphaned_runs(db_session)
 
-    status_by_id = {
-        run.id: run.status for run in (await db_session.execute(select(EvaluationRun))).scalars().all()
+    runs_by_id = {
+        run.id: run for run in (await db_session.execute(select(EvaluationRun))).scalars().all()
     }
-    assert status_by_id[old.id] == RunStatus.FAILED
-    assert status_by_id[recent.id] == RunStatus.RUNNING
+    assert runs_by_id[old.id].status == RunStatus.FAILED
+    assert runs_by_id[recent.id].status == RunStatus.RUNNING
+    # A órfã explica o que aconteceu; a run ainda ativa (deploy rolling) não
+    # recebe motivo nenhum.
+    assert runs_by_id[old.id].failure_reason is not None
+    assert "interrompida" in (runs_by_id[old.id].failure_reason or "")
+    assert runs_by_id[recent.id].failure_reason is None
 
 
 async def test_done_and_failed_runs_are_left_untouched(db_session) -> None:

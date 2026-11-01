@@ -49,6 +49,10 @@ class EvaluationRun(Base):
     )
     created_at: Mapped[datetime] = mapped_column(default=utcnow_naive)
     finished_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    # Por que a run terminou em FAILED. Antes o status era a única informação:
+    # a UI mostrava "failed" sem dizer se foi dataset vazio, erro estrutural ou
+    # processo morto no meio — o diagnóstico ficava só no log do servidor.
+    failure_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     results: Mapped[list["EvaluationResult"]] = relationship(back_populates="run")
 

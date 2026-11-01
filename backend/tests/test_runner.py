@@ -108,6 +108,10 @@ async def test_run_empty_dataset_marks_failed(db_session: AsyncSession) -> None:
     await db_session.refresh(run)
     assert run.status == RunStatus.FAILED
     assert run.finished_at is not None
+    # O motivo fica registrado: "failed" sozinho não dizia se foi dataset
+    # vazio, erro estrutural ou processo morto no meio.
+    assert run.failure_reason is not None
+    assert "sem samples" in run.failure_reason
 
     results = (
         await db_session.execute(select(EvaluationResult).where(EvaluationResult.run_id == run.id))
@@ -283,6 +287,9 @@ async def test_run_persiste_resultados_parciais_quando_falha_no_meio(
 
     await db_session.refresh(run)
     assert run.status == RunStatus.FAILED
+    # A causa estrutural vai para a API (antes só existia no log do servidor).
+    assert run.failure_reason is not None
+    assert "falha estrutural no meio da run" in run.failure_reason
 
     results = (
         await db_session.execute(select(EvaluationResult).where(EvaluationResult.run_id == run.id))

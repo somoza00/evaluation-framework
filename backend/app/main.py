@@ -125,6 +125,15 @@ async def _recover_orphaned_runs(session: AsyncSession) -> None:
         update(EvaluationRun)
         .where(EvaluationRun.status == RunStatus.RUNNING)
         .where(EvaluationRun.created_at < cutoff)
-        .values(status=RunStatus.FAILED, finished_at=utcnow_naive())
+        .values(
+            status=RunStatus.FAILED,
+            finished_at=utcnow_naive(),
+            # Diferencia "morreu no meio" de "dataset vazio"/"erro estrutural":
+            # sem isto o usuário só via "failed" e o motivo ficava no log.
+            failure_reason=(
+                "execução interrompida: a run ficou em RUNNING depois que o "
+                "processo que a executava terminou"
+            ),
+        )
     )
     await session.commit()
