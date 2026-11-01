@@ -78,6 +78,7 @@ class EvaluationRunner:
                 # o usuário entre "avaliou e não deu nada" e "ainda carregando".
                 run.status = RunStatus.FAILED
                 run.finished_at = utcnow_naive()
+                run.failure_reason = "dataset sem samples: não havia nada a avaliar"
                 await self.session.commit()
                 return
 
@@ -123,7 +124,7 @@ class EvaluationRunner:
             run.status = RunStatus.DONE
             run.finished_at = utcnow_naive()
             await self.session.commit()
-        except Exception:
+        except Exception as exc:
             # Se a exceção veio de um flush/commit (ex: IntegrityError), a
             # transação já foi abortada pelo driver — sem rollback aqui, o
             # commit abaixo levanta PendingRollbackError e mascara o erro
@@ -131,6 +132,9 @@ class EvaluationRunner:
             await self.session.rollback()
             run.status = RunStatus.FAILED
             run.finished_at = utcnow_naive()
+            # Guarda a causa para a API/UI: sem isto, um erro estrutural (banco
+            # fora, IntegrityError) só aparecia em "failed" e no log do servidor.
+            run.failure_reason = f"erro estrutural durante a run: {str(exc)[:500]}"
             await self.session.commit()
             raise
 

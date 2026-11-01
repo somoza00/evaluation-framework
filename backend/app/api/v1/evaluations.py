@@ -57,6 +57,9 @@ class RunResponse(BaseModel):
     created_at: datetime
     finished_at: datetime | None
     progress: float = 0.0  # 0.0–1.0
+    # Só preenchido quando status=failed: diz se foi dataset vazio, erro
+    # estrutural ou processo morto no meio (ver runner.py e main.py).
+    failure_reason: str | None = None
 
 
 def _progress(status: RunStatus, samples_count: int, results_count: int) -> float:
@@ -115,6 +118,7 @@ async def create_evaluation(
         status=run.status,
         created_at=run.created_at,
         finished_at=run.finished_at,
+        failure_reason=run.failure_reason,
         progress=0.0,
     )
 
@@ -181,6 +185,7 @@ async def list_evaluations(
             status=run.status,
             created_at=run.created_at,
             finished_at=run.finished_at,
+            failure_reason=run.failure_reason,
             progress=_progress(run.status, samples, results),
         )
         for run, samples, results in rows
@@ -212,6 +217,10 @@ async def retry_evaluation(
     await session.execute(delete(EvaluationResult).where(EvaluationResult.run_id == run_id))
     run.status = RunStatus.PENDING
     run.finished_at = None
+    # O motivo da falha anterior descreve uma execução que foi descartada: sem
+    # limpar, uma run re-enfileirada (e ainda PENDING) apareceria na API com o
+    # erro da tentativa antiga.
+    run.failure_reason = None
     await session.commit()
     await session.refresh(run)
 
@@ -224,6 +233,7 @@ async def retry_evaluation(
         status=run.status,
         created_at=run.created_at,
         finished_at=run.finished_at,
+        failure_reason=run.failure_reason,
         progress=0.0,
     )
 
@@ -252,6 +262,7 @@ async def get_evaluation(
         status=run.status,
         created_at=run.created_at,
         finished_at=run.finished_at,
+        failure_reason=run.failure_reason,
         progress=_progress(run.status, samples or 0, results or 0),
     )
 
