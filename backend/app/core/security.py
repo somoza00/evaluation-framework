@@ -136,15 +136,36 @@ async def _shared_rate_limit_exceeded(client_ip: str) -> bool | None:
     if client is None:
         return None
     key = f"ratelimit:{client_ip}"
+    window = int(_WINDOW_SECONDS)
     try:
-        count = await client.incr(key)
-        if count == 1:
-            await client.expire(key, int(_WINDOW_SECONDS))
+        # A chave nasce COM TTL, no mesmo MULTI do INCR. Antes era
+        # `INCR` + `EXPIRE` separados: se a conexão caísse (ou o processo
+        # morresse num deploy) entre os dois, o contador ficava sem TTL e o
+        # `INCR` seguinte só somava — o IP ficava bloqueado para SEMPRE, sem
+        # nada que o fizesse expirar. `SET ... EX ... NX` é atômico com o
+        # `INCR` e não reescreve o contador de quem já existe (a janela fixa
+        # continua a mesma: o TTL é definido na criação, não renovado a cada
+        # request).
+        async with client.pipeline(transaction=True) as pipe:
+            pipe.set(key, 0, ex=window, nx=True)
+            pipe.incr(key)
+            pipe.ttl(key)
+            _, count, ttl = await pipe.execute()
     except RedisError:
         security_logger.warning(
             "rate_limit_redis_unavailable", extra={"extra_fields": {"ip": client_ip}}
         )
         return None
+    if int(ttl) < 0:
+        # Chave órfã sem TTL (criada pela versão anterior, ou restaurada de um
+        # backup sem expiração): repara em vez de deixar o IP preso. Só acontece
+        # no caminho anômalo — o caminho normal já sai daqui com TTL.
+        try:
+            await client.expire(key, window)
+        except RedisError:
+            security_logger.warning(
+                "rate_limit_ttl_repair_failed", extra={"extra_fields": {"ip": client_ip}}
+            )
     return int(count) > settings.RATE_LIMIT_PER_MINUTE
 
 

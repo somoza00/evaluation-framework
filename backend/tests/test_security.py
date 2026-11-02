@@ -1,6 +1,8 @@
 """Testes de auth (X-API-Key) e rate limit — API antes era 100% aberta."""
 
 import logging
+from collections.abc import Callable
+from typing import Self
 
 import pytest
 from httpx import AsyncClient
@@ -120,39 +122,137 @@ async def test_rate_limit_bounds_distinct_ips(
     assert "3.3.3.3" in security_module._hits
 
 
+class _FakePipeline:
+    """Pipeline mínimo do redis-py async: bufferiza os comandos e aplica no EXECUTE.
+
+    Só o que o limiter usa: `SET key 0 EX <ttl> NX`, `INCR key` e `TTL key`.
+    """
+
+    def __init__(self, redis: "_FakeRedis") -> None:
+        self._redis = redis
+        self._ops: list[Callable[[], object]] = []
+
+    async def __aenter__(self) -> Self:
+        return self
+
+    async def __aexit__(self, *_exc: object) -> None:
+        return None
+
+    def set(
+        self, key: str, value: object, *, ex: int | None = None, nx: bool = False
+    ) -> Self:
+        self._ops.append(lambda: self._redis.do_set(key, value, ex=ex, nx=nx))
+        return self
+
+    def incr(self, key: str) -> Self:
+        self._ops.append(lambda: self._redis.do_incr(key))
+        return self
+
+    def ttl(self, key: str) -> Self:
+        self._ops.append(lambda: self._redis.ttl_of(key))
+        return self
+
+    async def execute(self) -> list[object]:
+        return [op() for op in self._ops]
+
+
+class _FakeRedis:
+    """Redis em memória com contadores e TTLs, suficiente para o limiter."""
+
+    def __init__(self, *, counts: dict[str, int] | None = None) -> None:
+        self.counts: dict[str, int] = dict(counts or {})
+        self.ttls: dict[str, int] = {}
+
+    def pipeline(self, transaction: bool = True) -> _FakePipeline:
+        return _FakePipeline(self)
+
+    def do_set(
+        self, key: str, value: object, *, ex: int | None = None, nx: bool = False
+    ) -> bool:
+        if nx and key in self.counts:
+            return False
+        self.counts[key] = int(value)  # type: ignore[arg-type]
+        if ex is not None:
+            self.ttls[key] = ex
+        return True
+
+    def do_incr(self, key: str) -> int:
+        self.counts[key] = self.counts.get(key, 0) + 1
+        return self.counts[key]
+
+    async def expire(self, key: str, seconds: int) -> bool:
+        self.ttls[key] = seconds
+        return True
+
+    def ttl_of(self, key: str) -> int:
+        """TTL restante em segundos (-1 = chave existe sem expiração, como no Redis)."""
+        return self.ttls.get(key, -1)
+
+
 async def test_shared_rate_limit_counts_in_redis(monkeypatch: pytest.MonkeyPatch) -> None:
     """Com REDIS_URL, o limite é contado no Redis (compartilhado entre workers)."""
-
-    class FakeRedis:
-        def __init__(self) -> None:
-            self.counts: dict[str, int] = {}
-
-        async def incr(self, key: str) -> int:
-            self.counts[key] = self.counts.get(key, 0) + 1
-            return self.counts[key]
-
-        async def expire(self, key: str, seconds: int) -> bool:
-            return True
-
+    fake = _FakeRedis()
     monkeypatch.setattr(settings, "REDIS_URL", "redis://localhost:6379/0")
-    monkeypatch.setattr(security_module, "_redis_client", FakeRedis())
+    monkeypatch.setattr(security_module, "_redis_client", fake)
     monkeypatch.setattr(security_module, "_redis_initialized", True)
     monkeypatch.setattr(settings, "RATE_LIMIT_PER_MINUTE", 2)
 
     assert await security_module._shared_rate_limit_exceeded("9.9.9.9") is False
     assert await security_module._shared_rate_limit_exceeded("9.9.9.9") is False
     assert await security_module._shared_rate_limit_exceeded("9.9.9.9") is True
+    # A janela é fixa: o TTL da chave é definido na criação e não é renovado
+    # a cada request (senão um cliente contínuo nunca sairia do 429).
+    assert fake.ttls["ratelimit:9.9.9.9"] == int(security_module._WINDOW_SECONDS)
+
+
+async def test_shared_rate_limit_always_sets_ttl_on_creation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regressão: a chave do contador NUNCA nasce sem TTL.
+
+    Antes era `INCR` seguido de `EXPIRE` (só quando o INCR devolvia 1). Se a
+    conexão caísse entre os dois comandos — ou o processo morresse num deploy —
+    o contador ficava sem TTL e cada request seguinte só somava: o IP era
+    bloqueado para sempre, sem nada que expirasse a chave.
+    """
+    fake = _FakeRedis()
+    monkeypatch.setattr(settings, "REDIS_URL", "redis://localhost:6379/0")
+    monkeypatch.setattr(security_module, "_redis_client", fake)
+    monkeypatch.setattr(security_module, "_redis_initialized", True)
+    monkeypatch.setattr(settings, "RATE_LIMIT_PER_MINUTE", 10)
+
+    await security_module._shared_rate_limit_exceeded("8.8.8.8")
+
+    assert fake.counts["ratelimit:8.8.8.8"] == 1
+    assert fake.ttls["ratelimit:8.8.8.8"] == int(security_module._WINDOW_SECONDS)
+
+
+async def test_shared_rate_limit_repairs_key_without_ttl(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Chave órfã sem TTL (criada pela versão anterior) é reparada, não herdada.
+
+    Sem o reparo, um contador antigo sem expiração continuaria bloqueando o IP
+    para sempre mesmo depois do deploy da correção.
+    """
+    fake = _FakeRedis(counts={"ratelimit:7.7.7.7": 5})
+    monkeypatch.setattr(settings, "REDIS_URL", "redis://localhost:6379/0")
+    monkeypatch.setattr(security_module, "_redis_client", fake)
+    monkeypatch.setattr(security_module, "_redis_initialized", True)
+    monkeypatch.setattr(settings, "RATE_LIMIT_PER_MINUTE", 100)
+
+    assert await security_module._shared_rate_limit_exceeded("7.7.7.7") is False
+
+    assert fake.counts["ratelimit:7.7.7.7"] == 6  # contador preservado (janela atual)
+    assert fake.ttls["ratelimit:7.7.7.7"] == int(security_module._WINDOW_SECONDS)
 
 
 async def test_shared_rate_limit_falls_back_on_redis_error(monkeypatch: pytest.MonkeyPatch) -> None:
     """Redis indisponível → None, para o chamador cair no limiter local."""
 
     class BrokenRedis:
-        async def incr(self, key: str) -> int:
+        def pipeline(self, transaction: bool = True) -> None:
             raise RedisError("redis down")
-
-        async def expire(self, key: str, seconds: int) -> bool:
-            return True
 
     monkeypatch.setattr(settings, "REDIS_URL", "redis://localhost:6379/0")
     monkeypatch.setattr(security_module, "_redis_client", BrokenRedis())
