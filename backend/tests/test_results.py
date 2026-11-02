@@ -126,6 +126,26 @@ async def test_compare_deduplicates_duplicate_run_ids(
     assert got == [run_id]
 
 
+async def test_compare_rejects_more_than_max_runs(client: AsyncClient) -> None:
+    """runs= com mais de 10 ids é recusado (422) antes de tocar no banco."""
+    ids = ",".join(str(uuid.uuid4()) for _ in range(11))
+
+    response = await client.get("/v1/results/compare", params={"runs": ids})
+
+    assert response.status_code == 422, response.text
+    assert "10" in response.json()["detail"]
+
+
+async def test_compare_accepts_exactly_the_max_runs(client: AsyncClient) -> None:
+    """No limite (10 ids) o pedido passa do teto e cai no 404 de runs inexistentes."""
+    ids = ",".join(str(uuid.uuid4()) for _ in range(10))
+
+    response = await client.get("/v1/results/compare", params={"runs": ids})
+
+    # 404 (não encontradas) e não 422: o teto não está barrando o caso legítimo.
+    assert response.status_code == 404, response.text
+
+
 async def test_results_ordered_by_created_at(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
