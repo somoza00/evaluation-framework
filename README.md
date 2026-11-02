@@ -103,7 +103,7 @@ GET  /v1/evaluations
 GET  /v1/evaluations/{id}
 GET  /v1/results/{run_id}
 GET  /v1/results/{run_id}/export   # CSV (todas as samples da run, para planilha)
-GET  /v1/results/compare?runs=id1,id2
+GET  /v1/results/compare?runs=id1,id2  # até 10 runs por comparação
 ```
 
 ## Schema (resumo)

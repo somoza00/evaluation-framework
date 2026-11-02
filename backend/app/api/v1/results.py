@@ -60,10 +60,23 @@ def _averages(results: Sequence[EvaluationResult]) -> dict[str, float | None]:
     return averages
 
 
+# A API é pública (Cloud Run) e o `/compare` recebe os ids na query string. Sem
+# teto, um `runs=` com milhares de UUIDs válidos gerava um `IN (...)` gigante e
+# uma query POR run em série (o endpoint é N+1 de propósito: uma run por vez).
+# Um único request ocupava o worker e o pool do banco por muito tempo — o
+# "trabalho" feito era só o cliente pedindo mais. 10 é bem mais do que a
+# comparação lado a lado da UI mostra e cobre o uso real.
+_MAX_COMPARE_RUNS = 10
+
+
 # Ordem importa: /compare é rota estática e precisa vir antes de /{run_id}.
 @router.get("/compare")
 async def compare_results(
-    runs: str = Query(..., description="IDs de runs separados por vírgula (ex: 1,2,3)"),
+    runs: str = Query(
+        ...,
+        max_length=500,
+        description="IDs de runs separados por vírgula (ex: 1,2,3; máx. 10 runs).",
+    ),
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     """Compara médias de score entre múltiplas runs (side-by-side)."""
@@ -82,6 +95,13 @@ async def compare_results(
         raise HTTPException(status_code=422, detail="runs deve conter UUIDs separados por vírgula")
     if not run_ids:
         raise HTTPException(status_code=422, detail="informe ao menos um run_id")
+    if len(run_ids) > _MAX_COMPARE_RUNS:
+        # Recusa ANTES de tocar no banco: o custo é uma query por run, então o
+        # teto tem que valer antes do `IN (...)`/do loop.
+        raise HTTPException(
+            status_code=422,
+            detail=f"compare aceita no máximo {_MAX_COMPARE_RUNS} runs por requisição",
+        )
 
     runs_found = (
         await session.execute(select(EvaluationRun).where(EvaluationRun.id.in_(run_ids)))
