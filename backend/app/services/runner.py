@@ -201,4 +201,17 @@ class EvaluationRunner:
                 "messages": [{"role": "user", "content": prompt}],
             },
         )
-        return str(response.json()["choices"][0]["message"]["content"])
+        content = response.json()["choices"][0]["message"]["content"]
+        # `content` vem null quando o provedor devolve só tool_call/chamada de
+        # função, quando o gateway corta a resposta ou quando o modelo devolve
+        # algo que não é texto. O `str(None)` anterior transformava isso na
+        # string "None", que era enviada ao judge como se fosse a resposta do
+        # modelo — e ele pontuava "None" (nota ~0 com reasoning plausível),
+        # fabricando um score em vez de registrar a falha da sample. Levantar
+        # ValueError faz o runner marcar a sample com actual_output="" e o
+        # motivo em judge_reasoning (mesmo caminho de "erro ao chamar o modelo").
+        if not isinstance(content, str) or not content.strip():
+            raise ValueError(
+                "resposta do modelo sem content textual (null/vazio): nada a avaliar"
+            )
+        return content
