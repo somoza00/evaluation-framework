@@ -19,6 +19,14 @@ logger = logging.getLogger(__name__)
 
 _RETRYABLE_STATUS = {429, 500, 502, 503, 504}
 
+# Teto do intervalo entre tentativas, em segundos. O `Retry-After` vem do
+# upstream e não tem limite superior: um proxy devolvendo `Retry-After: 3600`
+# (ou uma HTTP-date horas à frente) fazia o worker dormir uma hora no meio da
+# run — a run ficava RUNNING, a sample não avançava e o slot de trabalho ficava
+# preso, sem erro visível. Acima deste teto é melhor desistir rápido (o erro
+# propaga depois das `attempts`) do que dormir por tempo arbitrário.
+_MAX_RETRY_DELAY_SECONDS = 30.0
+
 
 def _parse_retry_after(
     response: httpx.Response, *, now: datetime | None = None
@@ -78,7 +86,12 @@ async def post_with_retry(
             )
 
         if attempt < attempts - 1:
-            backoff = max(base_delay * (2**attempt), retry_after_seconds)
+            # O teto vale para os dois lados do `max`: um Retry-After absurdo não
+            # pode virar uma espera de horas dentro da run.
+            backoff = min(
+                max(base_delay * (2**attempt), retry_after_seconds),
+                _MAX_RETRY_DELAY_SECONDS,
+            )
             logger.warning(
                 "http retry %d/%d em %.2fs (ultima falha: %s)",
                 attempt + 1,
