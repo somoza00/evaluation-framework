@@ -104,6 +104,40 @@ async def test_retry_respects_upstream_retry_after(
     assert sleeps and max(sleeps) >= 5.0
 
 
+async def test_retry_after_is_capped_at_the_max_delay(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Retry-After absurdo não dorme horas: a espera fica no teto de 30s.
+
+    Um proxy que responda `Retry-After: 3600` prendia o worker por uma hora no
+    meio da run (run RUNNING, sem erro, sem progresso). O teto transforma isso
+    em espera curta + falha explícita depois das tentativas.
+    """
+    from app.services.http_retry import _MAX_RETRY_DELAY_SECONDS
+
+    sleeps: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+
+    monkeypatch.setattr("app.services.http_retry.asyncio.sleep", fake_sleep)
+    calls = {"n": 0}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return httpx.Response(429, headers={"Retry-After": "3600"})
+        return httpx.Response(200, json={"ok": True})
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), base_url="http://test"
+    ) as client:
+        await post_with_retry(client, "/x", headers={}, json_body={}, base_delay=0.1)
+
+    assert sleeps == [_MAX_RETRY_DELAY_SECONDS]
+    assert calls["n"] == 2
+
+
 async def test_parse_retry_after_supports_http_date() -> None:
     """Retry-After em forma de data HTTP também é convertido para segundos."""
     from datetime import UTC, datetime
