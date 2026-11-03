@@ -182,6 +182,82 @@ async def test_run_model_malformed_json_isolates_sample(db_session: AsyncSession
     assert "erro ao chamar o modelo avaliado" in (results[0].judge_reasoning or "")
 
 
+async def test_run_model_null_content_is_not_scored_as_text(
+    db_session: AsyncSession,
+) -> None:
+    """`content: null` (só tool_call / resposta vazia) não pode virar a string "None".
+
+    Antes, `str(None)` fazia o judge avaliar o texto literal "None" e gravar um
+    score fabricado; agora a sample registra a falha (actual_output vazio +
+    motivo) e a run continua DONE, como nos demais erros de modelo.
+    """
+    run = await _make_run(db_session, JudgeType.DETERMINISTIC, n_samples=1)
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": None,
+                            "tool_calls": [{"id": "call_1", "type": "function"}],
+                        }
+                    }
+                ]
+            },
+        )
+
+    runner = EvaluationRunner(db_session, settings)
+    runner.llm_judge.client = httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), base_url="http://test"
+    )
+    try:
+        await runner.run(run.id)
+    finally:
+        await runner.close()
+
+    await db_session.refresh(run)
+    assert run.status == RunStatus.DONE
+
+    results = (
+        await db_session.execute(select(EvaluationResult).where(EvaluationResult.run_id == run.id))
+    ).scalars().all()
+    assert len(results) == 1
+    assert results[0].actual_output == ""
+    assert "None" not in results[0].actual_output
+    assert "sem content textual" in (results[0].judge_reasoning or "")
+    # Sem resposta do modelo não há o que pontuar: nada de score fabricado.
+    assert results[0].score_overall is None
+
+
+async def test_run_model_blank_content_is_not_scored_as_text(
+    db_session: AsyncSession,
+) -> None:
+    """Content só com espaços idem: nada a avaliar, sem score fabricado."""
+    run = await _make_run(db_session, JudgeType.DETERMINISTIC, n_samples=1)
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"choices": [{"message": {"content": "   "}}]})
+
+    runner = EvaluationRunner(db_session, settings)
+    runner.llm_judge.client = httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), base_url="http://test"
+    )
+    try:
+        await runner.run(run.id)
+    finally:
+        await runner.close()
+
+    results = (
+        await db_session.execute(select(EvaluationResult).where(EvaluationResult.run_id == run.id))
+    ).scalars().all()
+    assert len(results) == 1
+    assert results[0].actual_output == ""
+    assert results[0].score_overall is None
+
+
 async def test_run_llm_judge_failure_records_none_score(db_session: AsyncSession) -> None:
     """Judge LLM fora do ar: resultado grava score_overall=None, run ainda DONE."""
     run = await _make_run(db_session, JudgeType.LLM, n_samples=1)
