@@ -108,6 +108,41 @@ def test_parse_score_clamps_out_of_range() -> None:
     assert judge._parse_score('{"score": 0, "reasoning": "ok"}')[0] == 1
 
 
+def test_parse_score_rejects_non_finite_score() -> None:
+    """`1e999` no JSON vira `inf`: recusado como score, não vira nota inventada.
+
+    Antes o `int(float("inf"))` levantava OverflowError (não tratado) e o
+    fallback por regex ainda "pescava" o `1` do expoente, dando nota 0.0.
+    """
+    judge = _judge()
+    with pytest.raises(ValueError):
+        judge._parse_score('{"score": 1e999, "reasoning": "explodiu"}')
+    with pytest.raises(ValueError):
+        judge._parse_score('{"score": "nan", "reasoning": "explodiu"}')
+
+
+async def test_evaluate_non_finite_score_returns_none_not_overflow() -> None:
+    """Ponta a ponta: score absurdo é falha do judge (None), nunca exceção.
+
+    O OverflowError escapava do `evaluate`, subia pela task do runner e marcava
+    a run INTEIRA como FAILED — uma sample com score absurdo derrubava as
+    outras. Aqui o desfecho tem que ser o mesmo de qualquer judge sem score.
+    """
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        body = {"choices": [{"message": {"content": '{"score": 1e999, "reasoning": "x"}'}}]}
+        return httpx.Response(200, json=body)
+
+    judge = _judge_with_transport(httpx.MockTransport(handler))
+    try:
+        result = await judge.evaluate("prompt", "esperado", "atual")
+    finally:
+        await judge.close()
+
+    assert result["score_overall"] is None
+    assert "erro ao avaliar via LLM" in str(result["judge_reasoning"])
+
+
 async def test_evaluate_unquoted_content_still_scores() -> None:
     """Ponta a ponta: conteúdo solto vira nota normalizada em vez de None."""
 

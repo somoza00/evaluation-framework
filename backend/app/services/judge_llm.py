@@ -5,6 +5,7 @@ o de JUDGE_MODEL, autenticado com GATEWAY_API_KEY (Bearer).
 """
 
 import json
+import math
 import re
 from typing import Any
 
@@ -33,8 +34,18 @@ def _coerce_score(value: object) -> int:
 
     `int(value)` direto quebrava com float string ("4.0" → ValueError) e com
     float JSON que o modelo devolvesse como 4.0; float() cobre os dois.
+
+    Valor não finito (`1e999` no JSON vira `inf`; `"nan"`, `"inf"`) é recusado
+    aqui: `int(inf)` levanta `OverflowError`, que NÃO está entre as exceções
+    tratadas pelo `evaluate`/`_parse_score`. Uma única sample com esse score
+    levantava dentro da task do runner e derrubava a run INTEIRA (status FAILED),
+    jogando fora as outras samples. Convertendo em `ValueError`, o judge degrada
+    para `score_overall=None` — o mesmo caminho de qualquer resposta sem score.
     """
-    return int(float(str(value).replace(",", ".")))
+    number = float(str(value).replace(",", "."))
+    if not math.isfinite(number):
+        raise ValueError(f"score inválido (não finito): {value!r}")
+    return int(number)
 
 
 class LLMJudge:
@@ -99,21 +110,28 @@ class LLMJudge:
         Tenta json.loads primeiro; em caso de texto com ruído (ex: markdown,
         `Score: 4` sem aspas), faz fallback com regex. Levanta ValueError se
         não conseguir extrair.
+
+        O fallback só vale quando o JSON NÃO trouxe o campo `score`: com o campo
+        presente mas inválido (None, "alta", `1e999`), pescar um número do texto
+        inventava nota — `{"score": 1e999}` casava o `1` do expoente e a sample
+        recebia 1 (nota 0.0) em vez de falha do judge.
         """
         try:
             data = json.loads(content)
+        except (json.JSONDecodeError, TypeError):
+            data = None
+        if isinstance(data, dict) and "score" in data:
+            # `_coerce_score` levanta ValueError para valor inválido — o
+            # `evaluate` transforma isso em score_overall=None.
             score = _coerce_score(data["score"])
-            reasoning = str(data["reasoning"])
-        except (json.JSONDecodeError, KeyError, TypeError, ValueError):
-            # ValueError entrou aqui de propósito: JSON válido com score que
-            # não é número (ex: {"score": "alta"}) deve cair no fallback/
-            # ValueError — antes escapava como erro genérico do judge.
-            score_match = _SCORE_RE.search(content)
-            reasoning_match = _REASONING_RE.search(content.strip().rstrip("}"))
-            if score_match is None:
-                raise ValueError(f"resposta do judge sem campo 'score': {content[:200]}")
-            score = _coerce_score(score_match.group(1))
-            reasoning = reasoning_match.group(1).strip() if reasoning_match else "sem reasoning"
+            reasoning = str(data.get("reasoning") or "sem reasoning")
+            return max(1, min(5, score)), reasoning
+        score_match = _SCORE_RE.search(content)
+        reasoning_match = _REASONING_RE.search(content.strip().rstrip("}"))
+        if score_match is None:
+            raise ValueError(f"resposta do judge sem campo 'score': {content[:200]}")
+        score = _coerce_score(score_match.group(1))
+        reasoning = reasoning_match.group(1).strip() if reasoning_match else "sem reasoning"
         return max(1, min(5, score)), reasoning
 
     async def close(self) -> None:
