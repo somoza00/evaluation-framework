@@ -64,6 +64,43 @@ async def test_averages_cover_all_results_not_just_page(
     assert body["averages"]["score_overall"] == pytest.approx(sum(scores) / len(scores))
 
 
+async def test_averages_still_come_from_the_whole_run_on_empty_page(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Página além do fim (count=0) ainda traz as médias da run inteira.
+
+    As médias são agregadas no banco (`AVG`), não mais a partir das linhas
+    carregadas: a página vazia não pode zerar nem omitir a média.
+    """
+    created = await client.post("/v1/datasets", json={"name": "ds", "description": ""})
+    dataset_id = created.json()["id"]
+    samples = await client.post(
+        f"/v1/datasets/{dataset_id}/samples",
+        json=[{"input": f"q{i}", "expected_output": f"a{i}"} for i in range(2)],
+    )
+    sample_ids = samples.json()["ids"]
+
+    run_id = await _make_run(db_session, dataset_id)
+    for sid, score in zip(sample_ids, [0.4, 0.6]):
+        db_session.add(
+            EvaluationResult(
+                run_id=uuid.UUID(run_id),
+                sample_id=uuid.UUID(sid),
+                actual_output="x",
+                score_overall=score,
+            )
+        )
+    await db_session.commit()
+
+    response = await client.get(f"/v1/results/{run_id}", params={"offset": 10})
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["count"] == 0
+    assert body["averages"]["score_overall"] == pytest.approx(0.5)
+    # Sem nenhum score de coerência gravado, a média é None (não 0.0).
+    assert body["averages"]["score_coherence"] is None
+
+
 async def test_results_include_sample_input_and_expected(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:

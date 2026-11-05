@@ -235,12 +235,23 @@ async def get_results(
         )
     ).scalars().all()
     # Médias sobre TODOS os resultados da run (não só a página): senão páginas
-    # diferentes mostram médias diferentes e divergem de /compare.
-    all_results = (
+    # diferentes mostram médias diferentes e divergem de /compare. Agregado no
+    # BANCO (`AVG` por coluna): carregar todas as linhas da run em objetos ORM a
+    # cada página custava memória/CPU proporcionais ao tamanho da run por
+    # request — a paginação existia no payload, não no trabalho feito. Numa run
+    # de 500 samples, cada clique de página materializava 500 linhas para
+    # calcular 4 números.
+    averages_row = (
         await session.execute(
-            select(EvaluationResult).where(EvaluationResult.run_id == run_id)
+            select(
+                *[func.avg(getattr(EvaluationResult, field)) for field in _SCORE_FIELDS]
+            ).where(EvaluationResult.run_id == run_id)
         )
-    ).scalars().all()
+    ).one()
+    averages: dict[str, float | None] = {
+        field: (float(value) if value is not None else None)
+        for field, value in zip(_SCORE_FIELDS, averages_row, strict=True)
+    }
 
     # Join com os samples para expor input/expected_output de cada resultado
     # (a página de Results mostra isso na tabela).
@@ -265,6 +276,6 @@ async def get_results(
         "limit": limit,
         "offset": offset,
         "count": len(results),
-        "averages": _averages(all_results),
+        "averages": averages,
         "results": payload,
     }
