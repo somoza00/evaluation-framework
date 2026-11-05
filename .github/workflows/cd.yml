@@ -24,8 +24,84 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  deploy-backend:
+  preflight:
+    # O deploy só existe se as credenciais de GCP/Cloudflare estiverem
+    # configuradas. Sem essa checagem, um repo sem os secrets ia direto pro
+    # `google-github-actions/auth` e falhava com "the GitHub Action workflow
+    # must specify exactly one of workload_identity_provider or
+    # credentials_json" — CD vermelho em TODO merge na main, mesmo com a CI
+    # 100% verde. O efeito prático era ruim de dois jeitos: o histórico
+    # ficava permanentemente vermelho (ninguém mais olha) e um deploy que
+    # realmente quebrasse ficava indistinguível de "deploy nunca configurado".
+    # Aqui a configuração é conferida ANTES do primeiro passo de deploy: sem
+    # ela o deploy é pulado com aviso explícito no summary e na anotação da
+    # run; com ela, o caminho executado é exatamente o de antes.
     if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      enabled: ${{ steps.check.outputs.enabled }}
+    steps:
+      - id: check
+        env:
+          GCP_WORKLOAD_IDP_PROVIDER: ${{ secrets.GCP_WORKLOAD_IDP_PROVIDER }}
+          GCP_SERVICE_ACCOUNT_EMAIL: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
+          PROD_API_KEY: ${{ secrets.PROD_API_KEY }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          GCP_REGION: ${{ vars.GCP_REGION }}
+          GATEWAY_URL: ${{ vars.GATEWAY_URL }}
+          JUDGE_MODEL: ${{ vars.JUDGE_MODEL }}
+          CORS_ORIGINS_PROD: ${{ vars.CORS_ORIGINS_PROD }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_PROJECT_NAME: ${{ vars.CLOUDFLARE_PROJECT_NAME }}
+        run: |
+          # Variável/secret não configurado chega aqui como string vazia, então
+          # "existe?" é "não é vazio". A lista é a mesma usada pelos dois jobs
+          # de deploy logo abaixo: nenhum campo obrigatório fica de fora.
+          set -u
+          missing=""
+          add() { missing="${missing}- $1"$'\n'; }
+          require() {
+            for name in "$@"; do
+              value="${!name:-}"
+              [ -n "$value" ] || add "$name ($kind)"
+            done
+          }
+
+          kind="secret"; require \
+            GCP_WORKLOAD_IDP_PROVIDER \
+            GCP_SERVICE_ACCOUNT_EMAIL \
+            PROD_API_KEY \
+            CLOUDFLARE_API_TOKEN
+          kind="variable"; require \
+            GCP_REGION \
+            GATEWAY_URL \
+            JUDGE_MODEL \
+            CORS_ORIGINS_PROD \
+            CLOUDFLARE_ACCOUNT_ID \
+            CLOUDFLARE_PROJECT_NAME
+
+          if [ -z "$missing" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "enabled=false" >> "$GITHUB_OUTPUT"
+          echo "::warning title=CD pulado::deploy nao configurado; faltam: $(printf '%s' "$missing" | tr '\n' ' ')"
+          {
+            echo "### CD pulado — deploy não configurado"
+            echo ""
+            echo "A CI passou, mas o deploy não rodou porque o repo não tem estas credenciais/configurações:"
+            echo ""
+            printf '%s' "$missing"
+            echo ""
+            echo "Configure em Settings → Secrets and variables → Actions; a partir daí todo merge verde na main volta a deployar."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  deploy-backend:
+    needs: preflight
+    if: github.event.workflow_run.conclusion == 'success' && needs.preflight.outputs.enabled == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
