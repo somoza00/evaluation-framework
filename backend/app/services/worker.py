@@ -6,9 +6,9 @@ e o background task executá-la, a run ficaria PENDING para sempre. O worker a
 reivindica e executa. `RUN_WORKER_MIN_AGE_SECONDS` evita corrida com o dispatch
 imediato (só reivindica PENDING já "velha" o bastante).
 
-Limite conhecido: uma run que ficou RUNNING quando o processo morreu continua
-sendo marcada como FAILED pelo sweep de órfãs (`_recover_orphaned_runs`); os
-resultados já persistidos por sample não se perdem.
+Limite conhecido: uma run que ficou RUNNING quando o processo morreu é marcada
+como FAILED pelo sweep de órfãs, que roda no boot e periodicamente
+(`orphan_sweep_loop`); os resultados já persistidos por sample não se perdem.
 """
 
 from __future__ import annotations
