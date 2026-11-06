@@ -42,17 +42,23 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             await conn.run_sync(Base.metadata.create_all)
     async with AsyncSessionLocal() as session:
         await _recover_orphaned_runs(session)
-    worker_task: asyncio.Task[None] | None = None
+    background_tasks: list[asyncio.Task[None]] = []
     if settings.RUN_WORKER_ENABLED:
         # Rede de segurança: reivindica runs PENDING presas (dispatch perdido).
-        worker_task = asyncio.create_task(run_worker_loop())
+        background_tasks.append(asyncio.create_task(run_worker_loop()))
+        # ...e repete o sweep de órfãs: a passada única do boot poupa runs
+        # criadas há menos de ORPHANED_RUN_MAX_AGE_SECONDS e elas não voltariam
+        # a ser olhadas nunca (o worker só reivindica PENDING) — ficavam
+        # RUNNING para sempre na API/UI.
+        background_tasks.append(asyncio.create_task(orphan_sweep_loop()))
     try:
         yield
     finally:
-        if worker_task is not None:
-            worker_task.cancel()
+        for task in background_tasks:
+            task.cancel()
+        for task in background_tasks:
             with contextlib.suppress(asyncio.CancelledError):
-                await worker_task
+                await task
 
 
 app = FastAPI(
@@ -137,3 +143,34 @@ async def _recover_orphaned_runs(session: AsyncSession) -> None:
         )
     )
     await session.commit()
+
+
+async def sweep_orphaned_runs_once() -> None:
+    """Uma passada do sweep de órfãs, em sessão própria (uso do loop periódico)."""
+    async with AsyncSessionLocal() as session:
+        await _recover_orphaned_runs(session)
+
+
+async def orphan_sweep_loop(interval_seconds: float | None = None) -> None:
+    """Repete o sweep de órfãs enquanto o processo viver.
+
+    O sweep do boot é uma passada só: uma run que estava RUNNING quando o
+    processo caiu e cuja `created_at` é recente (menos de
+    `ORPHANED_RUN_MAX_AGE_SECONDS` na hora do restart) é poupada para não
+    atrapalhar deploy rolling — mas nunca era revisitada, porque o worker só
+    reivindica PENDING. Ela ficava RUNNING para sempre. Repetindo a passada, a
+    janela de idade deixa de ser um "buraco": passado o tempo, a run é marcada
+    FAILED com o motivo.
+
+    Falha de banco não pode derrubar o loop (senão o sweep morre no primeiro
+    blip do Postgres e o processo segue achando que está varrendo).
+    """
+    interval = (
+        settings.ORPHAN_SWEEP_INTERVAL_SECONDS if interval_seconds is None else interval_seconds
+    )
+    while True:
+        await asyncio.sleep(interval)
+        try:
+            await sweep_orphaned_runs_once()
+        except Exception:
+            logger.exception("orphan_sweep_failed")

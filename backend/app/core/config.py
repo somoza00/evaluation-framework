@@ -43,6 +43,11 @@ class Settings(BaseSettings):
     # mais antigas que isto (segundos). Evita que um deploy rolling marque
     # como falha uma run ainda ativa na instância anterior.
     ORPHANED_RUN_MAX_AGE_SECONDS: int = 300
+    # O sweep de órfãs também roda periodicamente (não só no boot): uma run
+    # interrompida HÁ MENOS de ORPHANED_RUN_MAX_AGE_SECONDS na hora do restart
+    # era poupada na única passada e ficava RUNNING para sempre (o worker só
+    # reivindica PENDING). Este é o intervalo entre passadas.
+    ORPHAN_SWEEP_INTERVAL_SECONDS: float = 60.0
     # Worker durável: reivindica e executa runs PENDING presas (ex.: dispatch
     # perdido num restart). Desligue em ambientes onde não se quer o loop.
     RUN_WORKER_ENABLED: bool = True
