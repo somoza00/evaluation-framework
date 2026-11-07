@@ -259,3 +259,33 @@ async def test_shared_rate_limit_falls_back_on_redis_error(monkeypatch: pytest.M
     monkeypatch.setattr(security_module, "_redis_initialized", True)
 
     assert await security_module._shared_rate_limit_exceeded("9.9.9.9") is None
+
+
+async def test_non_ascii_api_key_is_401_not_500(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Header com caractere não-ASCII vira 401, não TypeError (500).
+
+    `hmac.compare_digest` recusa `str` não-ASCII com TypeError. O servidor
+    decodifica o header em latin-1, então um `X-API-Key` com bytes UTF-8 (ou
+    qualquer texto acentuado) chegava como `str` com code points > 127 e a
+    exceção subia como 500 numa rota que deveria apenas negar acesso.
+    """
+    monkeypatch.setattr(settings, "API_KEY", "secret123")
+
+    response = await client.get(
+        "/v1/datasets", headers={"X-API-Key": "café".encode()}
+    )
+
+    assert response.status_code == 401
+
+
+async def test_ascii_api_key_still_matches(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A comparação em bytes não muda o caminho feliz (chave correta passa)."""
+    monkeypatch.setattr(settings, "API_KEY", "secret123")
+
+    response = await client.get("/v1/datasets", headers={"X-API-Key": "secret123"})
+
+    assert response.status_code == 200

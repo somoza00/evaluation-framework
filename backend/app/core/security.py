@@ -63,7 +63,14 @@ async def require_api_key(
     """
     if settings.API_KEY is None:
         return
-    if x_api_key is None or not hmac.compare_digest(x_api_key, settings.API_KEY):
+    # Comparação em BYTES: `hmac.compare_digest` levanta TypeError quando algum
+    # dos lados é `str` não-ASCII (o header chega decodificado em latin-1 pelo
+    # servidor, então `X-API-Key: <bytes UTF-8>` vira str com code points > 127).
+    # Esse TypeError subia como 500 num request que deveria ser só 401 — e a
+    # API é pública, então qualquer cliente podia disparar 500 à vontade.
+    if x_api_key is None or not hmac.compare_digest(
+        x_api_key.encode("utf-8"), settings.API_KEY.encode("utf-8")
+    ):
         security_logger.warning(
             "auth failed",
             extra={
