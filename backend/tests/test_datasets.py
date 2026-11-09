@@ -233,3 +233,32 @@ async def test_list_datasets_searches_by_name(client: AsyncClient) -> None:
 
     everything = (await client.get("/v1/datasets")).json()
     assert {d["name"] for d in everything} == {"Alpha QA", "Beta RAG"}
+
+
+async def test_list_datasets_search_treats_wildcards_literally(client: AsyncClient) -> None:
+    """Regressão: `%` e `_` digitados na busca são texto, não curinga de LIKE.
+
+    Sem escapar, `?q=%` virava `LIKE '%%%'` e devolvia TODOS os datasets (a busca
+    "não acha nada" nunca acontecia), e `?q=a_b` casava "axb". O usuário procura
+    por "50% off" ou "v1_2" e a lista vem com o conjunto inteiro.
+    """
+    for name in ("50% off", "50x off", "v1_2", "v1x2"):
+        assert (await client.post("/v1/datasets", json={"name": name})).status_code == 201
+
+    resp = await client.get("/v1/datasets", params={"q": "50%"})
+    assert resp.status_code == 200, resp.text
+    assert [d["name"] for d in resp.json()] == ["50% off"]
+
+    resp = await client.get("/v1/datasets", params={"q": "v1_2"})
+    assert resp.status_code == 200, resp.text
+    assert [d["name"] for d in resp.json()] == ["v1_2"]
+
+
+async def test_list_datasets_search_escapes_backslash(client: AsyncClient) -> None:
+    """A barra invertida (caractere de escape do LIKE) também é literal na busca."""
+    assert (await client.post("/v1/datasets", json={"name": "back\\slash"})).status_code == 201
+    assert (await client.post("/v1/datasets", json={"name": "backslash"})).status_code == 201
+
+    resp = await client.get("/v1/datasets", params={"q": "back\\slash"})
+    assert resp.status_code == 200, resp.text
+    assert [d["name"] for d in resp.json()] == ["back\\slash"]

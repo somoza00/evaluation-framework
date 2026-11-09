@@ -1,6 +1,6 @@
 """Fixtures compartilhadas: banco SQLite in-memory async + cliente HTTP."""
 
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Iterator
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -26,6 +26,26 @@ _engine = create_async_engine(
     connect_args={"check_same_thread": False},
     poolclass=StaticPool,
 )
+
+
+@pytest.fixture(autouse=True)
+def _reset_rate_limit_hits() -> Iterator[None]:
+    """Zera o contador do rate-limit em memória antes e depois de cada teste.
+
+    O limiter é estado de MÓDULO (`security._hits`) com janela de 60s: todos os
+    testes usam o mesmo IP (`testclient`), então a suíte inteira consumia o mesmo
+    balde de 120 req/min. Ao somar ~120 requests, os testes que rodavam por
+    último começavam a receber 429 de um limite que não têm nada a ver com o que
+    estão verificando (a falha aparecia em test_results.py, longe da causa) — e
+    qualquer teste novo podia derrubar a suíte por "excesso de tráfego". Os
+    testes do próprio limite (test_security.py) continuam válidos: eles contam
+    requests DENTRO de um teste, e o balde começa vazio em cada um.
+    """
+    from app.core.security import _hits
+
+    _hits.clear()
+    yield
+    _hits.clear()
 
 
 @pytest.fixture

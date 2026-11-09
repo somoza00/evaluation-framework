@@ -22,6 +22,23 @@ _MAX_FIELD_LENGTH = 20_000
 _DEFAULT_PAGE_SIZE = 50
 _MAX_PAGE_SIZE = 200
 
+# Caractere de escape do LIKE. A busca por nome interpola o termo do usuário num
+# padrão `%termo%`; sem escape, `?q=%` vira `LIKE '%%%'` e devolve TUDO, e
+# `?q=_` casa qualquer caractere (um dataset "v1_2" traria "v1x2" junto). É
+# escape de LIKE, não SQL injection: o valor continua parametrizado pelo
+# SQLAlchemy; o que quebra é a semântica de "busca por substring".
+_LIKE_ESCAPE = "\\"
+
+
+def _like_contains(term: str) -> str:
+    """Padrão `%termo%` com `%`, `_` e a barra de escape tratados como LITERAIS."""
+    escaped = (
+        term.replace(_LIKE_ESCAPE, _LIKE_ESCAPE * 2)
+        .replace("%", f"{_LIKE_ESCAPE}%")
+        .replace("_", f"{_LIKE_ESCAPE}_")
+    )
+    return f"%{escaped}%"
+
 
 class DatasetCreate(BaseModel):
     """Body do POST /v1/datasets."""
@@ -153,7 +170,7 @@ async def list_datasets(
         .order_by(Dataset.created_at.desc(), Dataset.id.desc())
     )
     if q is not None and q.strip():
-        stmt = stmt.where(Dataset.name.ilike(f"%{q.strip()}%"))
+        stmt = stmt.where(Dataset.name.ilike(_like_contains(q.strip()), escape=_LIKE_ESCAPE))
     rows = (await session.execute(stmt.limit(limit).offset(offset))).all()
     return [
         DatasetResponse(
