@@ -18,6 +18,24 @@ permissions:
   contents: read
 
 jobs:
+  compose-config:
+    # O caminho documentado de subir o stack é `docker compose up`, mas nenhum
+    # job daqui lia o docker-compose.yml: um YAML inválido, um `${...}` que só
+    # existe no .env de quem clonou (`GATEWAY_API_KEY` usa `${VAR:?}` e derruba
+    # a interpolação), uma porta obrigatória ou um `depends_on` apontando para
+    # serviço renomeado passavam por lint/types/testes/frontend/build/scan e só
+    # apareciam na máquina do usuário. O repo irmão study-memory-agent já roda
+    # este job; aqui o alvo `make config` existia, mas nada o executava.
+    runs-on: ubuntu-latest
+    env:
+      # Não existe .env no runner e o compose exige a variável (`${VAR:?}`).
+      # Valor de teste: o job valida a interpolação, não sobe nada.
+      GATEWAY_API_KEY: ci-test-key
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate docker-compose
+        run: docker compose config -q
+
   backend:
     runs-on: ubuntu-latest
     strategy:
