@@ -2,8 +2,14 @@
 # Uso: make config | make lint | make test | make up ...
 .PHONY: config up down build venv lint test frontend-build audit docker-build scan ci migrate-smoke
 
+# Espelha o job `compose-config` do CI. `GATEWAY_API_KEY` é exigida pelo compose
+# via `${VAR:?}` (de propósito: sem placeholder silencioso no código), então sem
+# um `.env` — como no runner — a interpolação falha antes de validar o arquivo e
+# o alvo acusaria a variável, não o YAML. O default abaixo serve só para a
+# validação (nada é iniciado); o valor do ambiente/.env continua tendo
+# precedência.
 config: ## Valida o docker-compose (sem subir nada)
-	docker compose config -q
+	GATEWAY_API_KEY=$${GATEWAY_API_KEY:-ci-test-key} docker compose config -q
 
 up: ## Sobe o stack em background
 	docker compose up -d --build
@@ -59,12 +65,12 @@ scan: docker-build ## Varre as duas imagens com Trivy (CRITICAL,HIGH), como no C
 	trivy image --severity CRITICAL,HIGH --exit-code 0 eval-frontend:ci
 
 # Roda os jobs do CI que dão para rodar na máquina de dev, na ordem do
-# workflow: backend (ruff + mypy + pytest), frontend (npm ci + build), auditoria
-# de CVE das deps e o build das imagens. Ficam de fora, de propósito:
-# `migrate-smoke` (precisa do Postgres do compose no ar — `docker compose up -d
-# db` antes) e `scan` (precisa do Trivy). Quem tem os dois roda
-# `make ci && make migrate-smoke && make scan`.
-ci: test frontend-build audit docker-build ## Sequência do CI local (sem migrate-smoke/scan)
+# workflow: `compose-config` (valida o docker-compose), backend (ruff + mypy +
+# pytest), frontend (npm ci + build), auditoria de CVE das deps e o build das
+# imagens. Ficam de fora, de propósito: `migrate-smoke` (precisa do Postgres do
+# compose no ar — `docker compose up -d db` antes) e `scan` (precisa do Trivy).
+# Quem tem os dois roda `make ci && make migrate-smoke && make scan`.
+ci: config test frontend-build audit docker-build ## Sequência do CI local (sem migrate-smoke/scan)
 
 # Espelha o job `migrations` do CI: aplica e desfaz TODAS as migrations contra um
 # Postgres de verdade. As migrations usam JSONB, então SQLite (o que o `make
