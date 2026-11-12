@@ -64,8 +64,13 @@ async def post_with_retry(
 ) -> httpx.Response:
     """POST com retry (backoff exponencial) em erro de transporte ou 429/5xx."""
     last_exc: Exception | None = None
-    retry_after_seconds = 0.0
     for attempt in range(attempts):
+        # Zerado a cada tentativa: o Retry-After vale para o response daquela
+        # tentativa. Sem o reset, uma tentativa que falhasse por transporte
+        # (sem response, logo sem header) herdava o valor da anterior e o sleep
+        # repetia uma espera que ninguém pediu — ex.: 429 com `Retry-After: 30`
+        # seguido de connection reset dormia 30s de novo, em vez do backoff.
+        retry_after_seconds = 0.0
         try:
             response = await client.post(url, headers=headers, json=json_body)
         except httpx.TransportError as exc:
@@ -74,13 +79,10 @@ async def post_with_retry(
             if response.status_code not in _RETRYABLE_STATUS:
                 response.raise_for_status()
                 return response
-            if not response.headers.get("retry-after"):
-                retry_after_seconds = 0.0
-            else:
-                # Honra o Retry-After do upstream tanto no 429 quanto num 5xx
-                # (ex.: 503 de manutenção/overload do gateway) — o upstream sabe
-                # melhor que o nosso backoff exponencial quanto esperar.
-                retry_after_seconds = _parse_retry_after(response)
+            # Honra o Retry-After do upstream tanto no 429 quanto num 5xx
+            # (ex.: 503 de manutenção/overload do gateway) — o upstream sabe
+            # melhor que o nosso backoff exponencial quanto esperar.
+            retry_after_seconds = _parse_retry_after(response)
             last_exc = httpx.HTTPStatusError(
                 f"status {response.status_code}", request=response.request, response=response
             )

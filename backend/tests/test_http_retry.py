@@ -218,3 +218,45 @@ async def test_retry_respects_retry_after_on_5xx(
 
     assert calls["n"] == 2
     assert sleeps and max(sleeps) >= 5.0
+
+
+async def test_retry_after_nao_vaza_para_a_tentativa_seguinte() -> None:
+    """Retry-After de uma tentativa não é reaproveitado por outra sem header.
+
+    429 com `Retry-After: 30` seguido de erro de transporte (que não traz
+    response, logo não traz header): antes o valor da tentativa anterior
+    continuava na variável e o segundo sleep repetia 30s. Agora o segundo
+    sleep é o backoff exponencial da tentativa atual.
+    """
+    sleeps: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr("app.services.http_retry.asyncio.sleep", fake_sleep)
+    try:
+        calls = {"n": 0}
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return httpx.Response(429, headers={"Retry-After": "30"})
+            if calls["n"] == 2:
+                raise httpx.ConnectError("connection reset", request=request)
+            return httpx.Response(200, json={"ok": True})
+
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(handler), base_url="http://test"
+        ) as client:
+            response = await post_with_retry(
+                client, "/x", headers={}, json_body={}, base_delay=0.1
+            )
+
+        assert response.status_code == 200
+        assert calls["n"] == 3
+        # 1º sleep: o Retry-After pedido pelo upstream. 2º: backoff exponencial
+        # (0.1 * 2**1), NÃO os 30s da tentativa anterior.
+        assert sleeps == [30.0, 0.2]
+    finally:
+        monkeypatch.undo()
