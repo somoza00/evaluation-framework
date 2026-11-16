@@ -23,7 +23,7 @@ from app.core.config import settings
 from app.core.database import AsyncSessionLocal
 from app.core.time import utcnow_naive
 from app.main import _recover_orphaned_runs
-from app.models.evaluation import EvaluationRun, JudgeType, RunStatus
+from app.models.evaluation import EvaluationResult, EvaluationRun, JudgeType, RunStatus
 
 
 def _run(*, status: RunStatus, created_at) -> EvaluationRun:
@@ -179,3 +179,58 @@ async def test_lifespan_starts_and_cancels_orphan_sweep(monkeypatch: pytest.Monk
         assert started == ["sweep"]
 
     assert cancelled == ["sweep"]
+
+
+async def test_running_run_longa_e_ativa_nao_e_marcada_failed(db_session) -> None:
+    """Regressão: o sweep olhava só `created_at` e matava run longa que trabalhava.
+
+    Uma run de 500 samples com RUN_CONCURRENCY=5 passa fácil dos
+    ORPHANED_RUN_MAX_AGE_SECONDS (default 300s) ainda rodando; a passada
+    periódica (a cada 60s) então a marcava FAILED NO MEIO da execução, e a
+    API/UI mostravam falha em algo que estava progredindo. O sinal de vida é o
+    resultado mais recente (o runner grava um por sample).
+    """
+    now = utcnow_naive()
+    window = settings.ORPHANED_RUN_MAX_AGE_SECONDS
+    run = _run(status=RunStatus.RUNNING, created_at=now - timedelta(seconds=window + 600))
+    db_session.add(run)
+    await db_session.commit()
+    db_session.add(
+        EvaluationResult(
+            run_id=run.id,
+            sample_id=uuid.uuid4(),
+            actual_output="resultado gravado agora: a run está trabalhando",
+            created_at=now - timedelta(seconds=5),
+        )
+    )
+    await db_session.commit()
+
+    await _recover_orphaned_runs(db_session)
+
+    await db_session.refresh(run)
+    assert run.status == RunStatus.RUNNING
+    assert run.failure_reason is None
+
+
+async def test_running_run_sem_atividade_recente_continua_sendo_orfã(db_session) -> None:
+    """Resultados antigos não salvam a run: sem sinal de vida na janela, é órfã."""
+    now = utcnow_naive()
+    window = settings.ORPHANED_RUN_MAX_AGE_SECONDS
+    run = _run(status=RunStatus.RUNNING, created_at=now - timedelta(seconds=window + 600))
+    db_session.add(run)
+    await db_session.commit()
+    db_session.add(
+        EvaluationResult(
+            run_id=run.id,
+            sample_id=uuid.uuid4(),
+            actual_output="última sample gravada muito antes da janela",
+            created_at=now - timedelta(seconds=window + 120),
+        )
+    )
+    await db_session.commit()
+
+    await _recover_orphaned_runs(db_session)
+
+    await db_session.refresh(run)
+    assert run.status == RunStatus.FAILED
+    assert run.failure_reason is not None
