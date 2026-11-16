@@ -9,7 +9,7 @@ from datetime import timedelta
 
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import text, update
+from sqlalchemy import func, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.datasets import router as datasets_router
@@ -21,7 +21,7 @@ from app.core.database import AsyncSessionLocal, Base, engine
 from app.core.logging import RequestContextMiddleware, configure_logging
 from app.core.security import rate_limit, require_api_key
 from app.core.time import utcnow_naive
-from app.models.evaluation import EvaluationRun, RunStatus
+from app.models.evaluation import EvaluationResult, EvaluationRun, RunStatus
 from app.services.worker import run_worker_loop
 
 configure_logging()
@@ -125,12 +125,30 @@ async def _recover_orphaned_runs(session: AsyncSession) -> None:
     recém-criadas: num deploy rolling, a instância nova não deve marcar
     como FAILED uma run ainda ativa na instância antiga. É um heurístico,
     não um lease — sem heartbeat/dono na linha, a corrida não some.
+
+    O sinal de vida é a ÚLTIMA ATIVIDADE, não a criação: o runner grava um
+    resultado por sample (commit por sample), então uma run que ainda trabalha
+    tem resultado recente. Antes a condição era só `created_at < cutoff`, e uma
+    run LONGA e saudável (500 samples, RUN_CONCURRENCY=5, modelos lentos — passa
+    fácil dos 300s default) era marcada FAILED pelo sweep periódico no meio da
+    execução: a API/UI mostravam falha em algo que estava rodando, e o
+    `failure_reason` mentia se o processo morresse depois.
     """
     cutoff = utcnow_naive() - timedelta(seconds=settings.ORPHANED_RUN_MAX_AGE_SECONDS)
+    # max(created_at) dos resultados da run; NULL = ainda não gravou nenhuma sample.
+    last_activity = (
+        select(func.max(EvaluationResult.created_at))
+        .where(EvaluationResult.run_id == EvaluationRun.id)
+        .correlate(EvaluationRun)
+        .scalar_subquery()
+    )
     await session.execute(
         update(EvaluationRun)
         .where(EvaluationRun.status == RunStatus.RUNNING)
+        # Criada há mais de uma janela (não atrapalha deploy rolling)...
         .where(EvaluationRun.created_at < cutoff)
+        # ...E sem sinal de vida dentro da janela (sem resultados, ou último já velho).
+        .where(or_(last_activity.is_(None), last_activity < cutoff))
         .values(
             status=RunStatus.FAILED,
             finished_at=utcnow_naive(),
