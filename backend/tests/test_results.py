@@ -149,6 +149,46 @@ async def test_compare_respects_requested_order(
     assert got == requested
 
 
+async def test_compare_averages_ignore_missing_scores(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Médias do /compare cobrem a run inteira e ignoram score ausente (None ≠ 0.0).
+
+    Agregado no banco (`AVG` por coluna): a run com 0.2 e 0.8 dá 0.5 (e não 0.33,
+    que seria a média se a amostra sem nota contasse como zero), e uma coluna
+    sem nenhuma nota sai como `null` — não como 0.0.
+    """
+    created = await client.post("/v1/datasets", json={"name": "ds", "description": ""})
+    dataset_id = created.json()["id"]
+
+    samples = await client.post(
+        f"/v1/datasets/{dataset_id}/samples",
+        json=[{"input": f"q{i}", "expected_output": f"a{i}"} for i in range(2)],
+    )
+    sample_ids = samples.json()["ids"]
+
+    run_id = await _make_run(db_session, dataset_id)
+    for sid, score in zip(sample_ids, [0.2, 0.8]):
+        db_session.add(
+            EvaluationResult(
+                run_id=uuid.UUID(run_id),
+                sample_id=uuid.UUID(sid),
+                actual_output="x",
+                score_overall=score,
+            )
+        )
+    await db_session.commit()
+
+    response = await client.get("/v1/results/compare", params={"runs": run_id})
+    assert response.status_code == 200, response.text
+    averages = response.json()["runs"][0]["averages"]
+    assert averages["score_overall"] == pytest.approx(0.5)
+    # Colunas em que nenhum resultado tem nota continuam None (nunca 0.0).
+    assert averages["score_fidelity"] is None
+    assert averages["score_coherence"] is None
+    assert averages["score_instruction"] is None
+
+
 async def test_compare_deduplicates_duplicate_run_ids(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
