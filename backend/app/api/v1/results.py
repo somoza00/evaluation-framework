@@ -3,7 +3,6 @@
 import csv
 import io
 import uuid
-from collections.abc import Sequence
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
@@ -51,13 +50,27 @@ class ResultResponse(BaseModel):
     expected_output: str | None = None
 
 
-def _averages(results: Sequence[EvaluationResult]) -> dict[str, float | None]:
-    """Média de cada score sobre os valores não-None (None se vazio)."""
-    averages: dict[str, float | None] = {}
-    for field in _SCORE_FIELDS:
-        values = [getattr(result, field) for result in results if getattr(result, field) is not None]
-        averages[field] = sum(values) / len(values) if values else None
-    return averages
+async def _average_scores(
+    session: AsyncSession, run_id: uuid.UUID
+) -> dict[str, float | None]:
+    """Média de cada score de UMA run, agregada no banco (`AVG` por coluna).
+
+    Média sobre os valores não-None (score ausente = falha do judge, não 0.0);
+    `None` quando a run não tem nenhuma nota naquela coluna. Calcular no banco é
+    o mesmo caminho já usado em `get_results`: carregar as linhas da run em
+    objetos ORM só para somar quatro números custa memória/CPU proporcionais ao
+    tamanho da run — e no `/compare` isso acontecia uma vez POR run comparada.
+    """
+    row = (
+        await session.execute(
+            select(*[func.avg(getattr(EvaluationResult, field)) for field in _SCORE_FIELDS])
+            .where(EvaluationResult.run_id == run_id)
+        )
+    ).one()
+    return {
+        field: (float(value) if value is not None else None)
+        for field, value in zip(_SCORE_FIELDS, row, strict=True)
+    }
 
 
 # A API é pública (Cloud Run) e o `/compare` recebe os ids na query string. Sem
@@ -114,18 +127,17 @@ async def compare_results(
     runs_by_id = {run.id: run for run in runs_found}
     comparison = []
     for run in (runs_by_id[run_id] for run_id in run_ids):
-        results = (
-            await session.execute(
-                select(EvaluationResult).where(EvaluationResult.run_id == run.id)
-            )
-        ).scalars().all()
         comparison.append(
             {
                 "run_id": str(run.id),
                 "model": run.model,
                 "judge_type": run.judge_type.value,
                 "status": run.status.value,
-                "averages": _averages(results),
+                # Agregado no banco (AVG), não sobre as linhas carregadas: o
+                # `/compare` é N+1 de propósito (uma run por vez) e materializar
+                # todos os resultados de cada run fazia o custo crescer com
+                # samples x runs comparadas.
+                "averages": await _average_scores(session, run.id),
             }
         )
     return {"runs": comparison}
@@ -260,17 +272,7 @@ async def get_results(
     # request — a paginação existia no payload, não no trabalho feito. Numa run
     # de 500 samples, cada clique de página materializava 500 linhas para
     # calcular 4 números.
-    averages_row = (
-        await session.execute(
-            select(
-                *[func.avg(getattr(EvaluationResult, field)) for field in _SCORE_FIELDS]
-            ).where(EvaluationResult.run_id == run_id)
-        )
-    ).one()
-    averages: dict[str, float | None] = {
-        field: (float(value) if value is not None else None)
-        for field, value in zip(_SCORE_FIELDS, averages_row, strict=True)
-    }
+    averages = await _average_scores(session, run_id)
 
     # Join com os samples para expor input/expected_output de cada resultado
     # (a página de Results mostra isso na tabela).
