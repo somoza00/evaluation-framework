@@ -19,6 +19,15 @@ updates:
     directory: "/frontend"
     schedule:
       interval: "weekly"
+    # A base da imagem do frontend tem de ser o MESMO major do `node-version`
+    # do CI e do CD (24 hoje): o `npm ci` + `npm run build` validados no CI e
+    # o build de produção precisam rodar no mesmo runtime da imagem. Um bump
+    # major automático aqui (24 -> 26, já ocorrido no #62) deixou a imagem à
+    # frente do CI sem ninguém notar. Suba os três juntos — CI, CD e esta
+    # base — e só então remova esta regra. Patch/minor continuam normais.
+    ignore:
+      - dependency-name: "node"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: "github-actions"
     directory: "/"
