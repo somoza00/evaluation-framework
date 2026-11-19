@@ -66,6 +66,30 @@ async def test_add_samples_bulk(client: AsyncClient) -> None:
     assert len(data["ids"]) == 3
 
 
+async def test_add_samples_rejects_empty_list(client: AsyncClient) -> None:
+    """Lista vazia é 422 e não grava nada (201 com `count: 0` mentia sucesso).
+
+    Um upload que chega vazio (arquivo lido errado, filtro que zerou a lista)
+    respondia 201 e o dataset continuava sem samples; a falha só aparecia
+    depois, quando toda run daquele dataset terminava em "dataset sem samples".
+    """
+    created = await client.post("/v1/datasets", json={"name": "ds-empty"})
+    dataset_id = created.json()["id"]
+
+    response = await client.post(f"/v1/datasets/{dataset_id}/samples", json=[])
+    assert response.status_code == 422
+    assert "ao menos um sample" in response.json()["detail"]
+
+    detail = await client.get(f"/v1/datasets/{dataset_id}")
+    assert detail.json()["samples_count"] == 0
+
+
+async def test_add_samples_404_before_empty_check(client: AsyncClient) -> None:
+    """Dataset inexistente continua 404 mesmo com lista vazia (não vira 422)."""
+    response = await client.post(f"/v1/datasets/{uuid.uuid4()}/samples", json=[])
+    assert response.status_code == 404
+
+
 async def test_dataset_not_found(client: AsyncClient) -> None:
     """GET /v1/datasets/{id_inexistente} retorna 404."""
     response = await client.get(f"/v1/datasets/{uuid.uuid4()}")
