@@ -98,6 +98,7 @@ distinguir quem fez uma run. Para expor isto publicamente ou multi-tenant,
 ```
 POST /v1/datasets
 POST /v1/datasets/{id}/samples
+DELETE /v1/datasets/{id}/samples/{sample_id}  # 409 se a sample já foi avaliada
 GET  /v1/datasets
 POST /v1/evaluations
 GET  /v1/evaluations

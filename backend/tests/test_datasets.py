@@ -6,7 +6,7 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.dataset import Sample
-from app.models.evaluation import EvaluationRun, JudgeType, RunStatus
+from app.models.evaluation import EvaluationResult, EvaluationRun, JudgeType, RunStatus
 
 
 async def test_create_dataset(client: AsyncClient) -> None:
@@ -286,3 +286,103 @@ async def test_list_datasets_search_escapes_backslash(client: AsyncClient) -> No
     resp = await client.get("/v1/datasets", params={"q": "back\\slash"})
     assert resp.status_code == 200, resp.text
     assert [d["name"] for d in resp.json()] == ["back\\slash"]
+
+
+async def test_delete_sample_removes_only_that_sample(client: AsyncClient) -> None:
+    """DELETE /v1/datasets/{id}/samples/{sample_id} tira UM sample e mantém o resto."""
+    created = await client.post("/v1/datasets", json={"name": "ds-del-sample"})
+    dataset_id = created.json()["id"]
+    added = (
+        await client.post(
+            f"/v1/datasets/{dataset_id}/samples",
+            json=[
+                {"input": "q1", "expected_output": "a1"},
+                {"input": "q2", "expected_output": "a2"},
+            ],
+        )
+    ).json()
+    doomed, kept = added["ids"]
+
+    resp = await client.delete(f"/v1/datasets/{dataset_id}/samples/{doomed}")
+    assert resp.status_code == 204, resp.text
+
+    page = (await client.get(f"/v1/datasets/{dataset_id}/samples")).json()
+    assert page["total"] == 1
+    assert [s["id"] for s in page["samples"]] == [kept]
+    # A contagem do dataset acompanha a remoção (a UI não fica mostrando 2).
+    assert (await client.get(f"/v1/datasets/{dataset_id}")).json()["samples_count"] == 1
+
+
+async def test_delete_sample_404_for_sample_of_another_dataset(client: AsyncClient) -> None:
+    """Id de sample de OUTRO dataset não é apagável por esta rota (404, nada muda)."""
+    first = (await client.post("/v1/datasets", json={"name": "ds-a"})).json()["id"]
+    second = (await client.post("/v1/datasets", json={"name": "ds-b"})).json()["id"]
+    sample_id = (
+        await client.post(
+            f"/v1/datasets/{first}/samples",
+            json=[{"input": "q1", "expected_output": "a1"}],
+        )
+    ).json()["ids"][0]
+
+    resp = await client.delete(f"/v1/datasets/{second}/samples/{sample_id}")
+    assert resp.status_code == 404, resp.text
+
+    assert (await client.get(f"/v1/datasets/{first}/samples")).json()["total"] == 1
+    assert (await client.delete(f"/v1/datasets/{uuid.uuid4()}/samples/{sample_id}")).status_code == 404
+
+
+async def test_delete_sample_404_when_already_gone(client: AsyncClient) -> None:
+    """Repetir o DELETE do mesmo sample devolve 404 (não um 204 mentiroso)."""
+    dataset_id = (await client.post("/v1/datasets", json={"name": "ds-twice"})).json()["id"]
+    sample_id = (
+        await client.post(
+            f"/v1/datasets/{dataset_id}/samples",
+            json=[{"input": "q1", "expected_output": "a1"}],
+        )
+    ).json()["ids"][0]
+
+    assert (
+        await client.delete(f"/v1/datasets/{dataset_id}/samples/{sample_id}")
+    ).status_code == 204
+    assert (
+        await client.delete(f"/v1/datasets/{dataset_id}/samples/{sample_id}")
+    ).status_code == 404
+
+
+async def test_delete_sample_409_when_already_evaluated(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Sample com resultado de run não é apagado (409): o histórico perderia a referência."""
+    dataset_id = (await client.post("/v1/datasets", json={"name": "ds-com-run"})).json()["id"]
+    sample_id = (
+        await client.post(
+            f"/v1/datasets/{dataset_id}/samples",
+            json=[{"input": "q1", "expected_output": "a1"}],
+        )
+    ).json()["ids"][0]
+
+    run_id = uuid.uuid4()
+    db_session.add(
+        EvaluationRun(
+            id=run_id,
+            dataset_id=uuid.UUID(dataset_id),
+            model="m",
+            judge_type=JudgeType.DETERMINISTIC,
+            status=RunStatus.DONE,
+        )
+    )
+    db_session.add(
+        EvaluationResult(
+            run_id=run_id,
+            sample_id=uuid.UUID(sample_id),
+            actual_output="a1",
+        )
+    )
+    await db_session.commit()
+
+    resp = await client.delete(f"/v1/datasets/{dataset_id}/samples/{sample_id}")
+    assert resp.status_code == 409, resp.text
+    assert "run" in resp.json()["detail"]
+
+    assert (await client.get(f"/v1/datasets/{dataset_id}/samples")).json()["total"] == 1
+

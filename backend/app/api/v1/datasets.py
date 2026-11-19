@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_session
 from app.models.dataset import Dataset, Sample
-from app.models.evaluation import EvaluationRun
+from app.models.evaluation import EvaluationResult, EvaluationRun
 
 router = APIRouter(prefix="/datasets", tags=["datasets"])
 
@@ -268,6 +268,46 @@ async def list_samples(
             for sample in samples
         ],
     }
+
+
+@router.delete("/{dataset_id}/samples/{sample_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_sample(
+    dataset_id: uuid.UUID,
+    sample_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+) -> Response:
+    """Remove UM sample do dataset; 409 se ele já foi avaliado em alguma run.
+
+    `POST /samples` cria em lote e não havia como tirar um sample errado: o único
+    caminho era apagar o dataset inteiro (que exige apagar as runs antes) e
+    reenviar tudo. Aqui a remoção é cirúrgica — e o par dataset/sample no path
+    impede que um id de outro dataset seja apagado por esta rota (404).
+
+    Sample com `evaluation_results` não sai: a FK não tem ON DELETE CASCADE, então
+    apagar deixaria o resultado histórico da run sem referência (no Postgres o
+    DELETE estoura a FK e virava 500 cru). 409 diz o motivo e o que fazer antes.
+    """
+    dataset = await session.get(Dataset, dataset_id)
+    if dataset is None:
+        raise HTTPException(status_code=404, detail="dataset não encontrado")
+    sample = await session.get(Sample, sample_id)
+    if sample is None or sample.dataset_id != dataset_id:
+        raise HTTPException(status_code=404, detail="sample não encontrado neste dataset")
+
+    results_count = await session.scalar(
+        select(func.count(EvaluationResult.id)).where(EvaluationResult.sample_id == sample_id)
+    )
+    if results_count:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"sample possui {results_count} resultado(s) de avaliação; "
+                "remova a run antes"
+            ),
+        )
+    await session.delete(sample)
+    await session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.patch("/{dataset_id}", response_model=DatasetResponse)
