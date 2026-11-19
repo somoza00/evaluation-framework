@@ -130,10 +130,25 @@ async def add_samples(
     payload: Annotated[list[SampleCreate], Body(max_length=_MAX_SAMPLES_PER_REQUEST)],
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
-    """Cria múltiplos Samples em bulk; retorna count e ids criados."""
+    """Cria múltiplos Samples em bulk; retorna count e ids criados.
+
+    Lista vazia → 422: não há nada a gravar, e 201 com `count: 0` fazia um
+    upload que não aconteceu parecer sucesso.
+    """
     dataset = await session.get(Dataset, dataset_id)
     if dataset is None:
         raise HTTPException(status_code=404, detail="dataset não encontrado")
+
+    # Lista vazia é um upload que não gravou nada: a rota respondia 201 com
+    # `{"count": 0}` — o cliente recebia "sucesso" de um POST que não criou
+    # sample nenhum (ex.: um arquivo lido errado ou um filtro que zerou a lista)
+    # e só descobria depois, com toda run daquele dataset falhando em "dataset
+    # sem samples". 422 diz a verdade na hora e não custa nada.
+    if not payload:
+        raise HTTPException(
+            status_code=422,
+            detail="envie ao menos um sample: uma lista vazia não grava nada",
+        )
 
     samples = [
         Sample(
