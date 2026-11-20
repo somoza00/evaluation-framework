@@ -95,17 +95,27 @@ distinguir quem fez uma run. Para expor isto publicamente ou multi-tenant,
 
 ## Endpoints (v1)
 
+Lista completa das rotas registradas em `backend/app/api/v1/*.py` (datasets,
+evaluations, results). `limit`/`offset` são `limit`-paginados; `{id}` é UUID
+malformado → 422.
+
 ```
-POST /v1/datasets
-POST /v1/datasets/{id}/samples
-DELETE /v1/datasets/{id}/samples/{sample_id}  # 409 se a sample já foi avaliada
-GET  /v1/datasets
-POST /v1/evaluations
-GET  /v1/evaluations
-GET  /v1/evaluations/{id}
-GET  /v1/results/{run_id}
-GET  /v1/results/{run_id}/export   # CSV (todas as samples da run, para planilha)
-GET  /v1/results/compare?runs=id1,id2  # até 10 runs por comparação
+POST   /v1/datasets                                # 201; {name, description}
+GET    /v1/datasets?q=&limit=&offset=              # lista com samples_count; `q` busca por nome
+GET    /v1/datasets/{id}                           # detalhe com samples_count (404 se não existir)
+PATCH  /v1/datasets/{id}                           # edita name/description (parcial)
+DELETE /v1/datasets/{id}                           # 204; 409 se o dataset já tem runs
+POST   /v1/datasets/{id}/samples                   # 201, em lote; 422 se a lista vier vazia
+GET    /v1/datasets/{id}/samples?limit=&offset=    # samples paginados (total/limit/offset/count)
+DELETE /v1/datasets/{id}/samples/{sample_id}       # 204; 409 se a sample já foi avaliada
+POST   /v1/evaluations                             # 202: cria a run e dispara o runner
+GET    /v1/evaluations?status=&model=&dataset_id=&judge_type=&limit=&offset=
+GET    /v1/evaluations/{id}                        # detalhe com progresso e failure_reason
+POST   /v1/evaluations/{id}/retry                  # 202; 409 se a run está RUNNING
+DELETE /v1/evaluations/{id}                        # 204: remove a run e os resultados dela
+GET    /v1/results/{run_id}?limit=&offset=         # resultados paginados + médias + total
+GET    /v1/results/{run_id}/export                 # CSV (todas as samples da run, para planilha)
+GET    /v1/results/compare?runs=id1,id2            # até 10 runs por comparação
 ```
 
 ## Schema (resumo)
