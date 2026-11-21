@@ -10,7 +10,7 @@
 # em 24 — build local num Node, build de produção em outro. A regra `ignore`
 # em .github/dependabot.yml impede a repetição; ao subir o CI/CD, suba esta
 # base junto (e o digest com ela).
-FROM node:24-slim@sha256:3638d9a6fe4030bd716be989438248074489337ba3275657f93595428be4fc03
+FROM node:24-slim@sha256:dc26ae92c9fb15cf6b1d63e20f0944b2efe0f115b20e00be48fb23fceb061c54
 WORKDIR /app
 COPY package*.json ./
 # `npm ci` (não `npm install`): o package-lock.json está commitado e é o que o
