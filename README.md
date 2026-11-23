@@ -112,7 +112,7 @@ POST   /v1/evaluations                             # 202: cria a run e dispara o
 GET    /v1/evaluations?status=&model=&dataset_id=&judge_type=&limit=&offset=
 GET    /v1/evaluations/{id}                        # detalhe com progresso e failure_reason
 POST   /v1/evaluations/{id}/retry                  # 202; 409 se a run está RUNNING
-DELETE /v1/evaluations/{id}                        # 204: remove a run e os resultados dela
+DELETE /v1/evaluations/{id}                        # 204: remove a run e os resultados dela; 409 se a run está RUNNING
 GET    /v1/results/{run_id}?limit=&offset=         # resultados paginados + médias + total
 GET    /v1/results/{run_id}/export                 # CSV (todas as samples da run, para planilha)
 GET    /v1/results/compare?runs=id1,id2            # até 10 runs por comparação

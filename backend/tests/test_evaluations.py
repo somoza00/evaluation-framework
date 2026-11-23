@@ -134,6 +134,34 @@ async def test_delete_evaluation_404_when_missing(client: AsyncClient, mock_runn
     assert response.status_code == 404
 
 
+async def test_delete_evaluation_409_when_running(
+    client: AsyncClient, db_session, mock_runner: None
+) -> None:
+    """Run RUNNING não sai: apagar a linha deixaria o runner escrevendo nela.
+
+    Sem a guarda, o DELETE devolvia 204 e o runner seguia chamando modelo/judge;
+    o INSERT do resultado estourava a FK (run inexistente) e o `except`
+    estrutural tentava marcar FAILED numa linha que já não existia. `retry` já
+    recusa RUNNING; o delete passa a recusar também.
+    """
+    ds = (await client.post("/v1/datasets", json={"name": "ds"})).json()["id"]
+    rid = uuid.uuid4()
+    db_session.add(
+        EvaluationRun(
+            id=rid, dataset_id=uuid.UUID(ds), model="m",
+            judge_type=JudgeType.DETERMINISTIC, status=RunStatus.RUNNING,
+        )
+    )
+    await db_session.commit()
+
+    resp = await client.delete(f"/v1/evaluations/{rid}")
+    assert resp.status_code == 409
+    assert "em execução" in resp.json()["detail"]
+
+    # A run continua existindo (nada foi apagado no meio).
+    assert (await client.get(f"/v1/evaluations/{rid}")).status_code == 200
+
+
 async def test_list_evaluations_stable_tiebreak(
     client: AsyncClient, db_session, mock_runner: None
 ) -> None:
