@@ -272,10 +272,24 @@ async def delete_evaluation(
     run_id: uuid.UUID,
     session: AsyncSession = Depends(get_session),
 ) -> Response:
-    """Remove uma run e seus resultados (cascade manual — FK sem CASCADE); 404 se não existir."""
+    """Remove uma run e seus resultados (cascade manual — FK sem CASCADE).
+
+    404 se não existir; **409 se a run estiver RUNNING**: apagar a linha no meio
+    da execução deixava o runner (BackgroundTasks ou worker) escrevendo resultados
+    para uma run que não existe mais — o INSERT estourava a FK, o `except`
+    estrutural tentava marcar FAILED numa linha apagada (UPDATE em 0 linhas) e as
+    chamadas ao modelo/judge continuavam até falhar, sem ninguém para ver o
+    desfecho. `retry` já recusa RUNNING pelo mesmo motivo; o delete não.
+    Terminar (done/failed) antes de remover é o caminho seguro.
+    """
     run = await session.get(EvaluationRun, run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="run não encontrada")
+    if run.status == RunStatus.RUNNING:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="run em execução; aguarde terminar (ou falhar) antes de remover",
+        )
     await session.execute(delete(EvaluationResult).where(EvaluationResult.run_id == run_id))
     await session.delete(run)
     await session.commit()
