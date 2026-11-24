@@ -118,6 +118,12 @@ GET    /v1/results/{run_id}/export                 # CSV (todas as samples da ru
 GET    /v1/results/compare?runs=id1,id2            # até 10 runs por comparação
 ```
 
+Fora de `/v1` (sem `X-API-Key`, como o `/health`): `GET /metrics` expõe, no
+formato de scrape do Prometheus, os contadores que o runner incrementa —
+`eval_runs_finished_total{status}`, `eval_results_persisted_total{outcome}`
+(`scored`/`unscored`: resultado sem nota = falha do judge/modelo) e o histograma
+`eval_run_duration_seconds`. Só agregados: nenhum dado de dataset ou de usuário.
+
 ## Schema (resumo)
 
 - `datasets`: id, name, description, created_at
