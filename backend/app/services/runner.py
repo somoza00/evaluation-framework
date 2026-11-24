@@ -1,6 +1,7 @@
 """Runner: orquestra a avaliação de uma EvaluationRun de ponta a ponta."""
 
 import asyncio
+import time
 import uuid
 
 import httpx
@@ -16,6 +17,7 @@ from app.models.evaluation import (
     JudgeType,
     RunStatus,
 )
+from app.services import metrics
 from app.services.http_retry import post_with_retry
 from app.services.judge_deterministic import DeterministicJudge
 from app.services.judge_llm import LLMJudge
@@ -63,6 +65,9 @@ class EvaluationRunner:
 
         run.status = RunStatus.RUNNING
         await self.session.commit()
+        # Marca o início para o histograma de duração: uma run lenta por
+        # rate-limit do gateway só era visível observando a UI.
+        started_at = time.monotonic()
 
         try:
             samples = (
@@ -80,6 +85,9 @@ class EvaluationRunner:
                 run.finished_at = utcnow_naive()
                 run.failure_reason = "dataset sem samples: não havia nada a avaliar"
                 await self.session.commit()
+                metrics.record_run_finished(
+                    status="failed", duration_seconds=time.monotonic() - started_at
+                )
                 return
 
             semaphore = asyncio.Semaphore(max(1, self.settings.RUN_CONCURRENCY))
@@ -113,8 +121,15 @@ class EvaluationRunner:
                         pending, return_when=asyncio.FIRST_COMPLETED
                     )
                     for task in done:
-                        self.session.add(task.result())
+                        result = task.result()
+                        self.session.add(result)
                         await self.session.commit()
+                        # Um resultado sem nota é falha do judge/modelo (o motivo
+                        # fica em judge_reasoning): é o sinal de que o gateway
+                        # está fora, não um desfecho neutro.
+                        metrics.record_result(
+                            outcome="scored" if result.score_overall is not None else "unscored"
+                        )
             finally:
                 # Numa falha estrutural ninguém vai persistir o resultado das
                 # samples ainda em voo: cancela para não ficar chamando modelo.
@@ -124,6 +139,9 @@ class EvaluationRunner:
             run.status = RunStatus.DONE
             run.finished_at = utcnow_naive()
             await self.session.commit()
+            metrics.record_run_finished(
+                status="done", duration_seconds=time.monotonic() - started_at
+            )
         except Exception as exc:
             # Se a exceção veio de um flush/commit (ex: IntegrityError), a
             # transação já foi abortada pelo driver — sem rollback aqui, o
@@ -136,6 +154,9 @@ class EvaluationRunner:
             # fora, IntegrityError) só aparecia em "failed" e no log do servidor.
             run.failure_reason = f"erro estrutural durante a run: {str(exc)[:500]}"
             await self.session.commit()
+            metrics.record_run_finished(
+                status="failed", duration_seconds=time.monotonic() - started_at
+            )
             raise
 
     async def _build_result(

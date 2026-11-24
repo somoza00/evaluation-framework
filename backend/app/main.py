@@ -7,8 +7,9 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import timedelta
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from sqlalchemy import func, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -92,6 +93,21 @@ _v1_dependencies = [Depends(require_api_key), Depends(rate_limit)]
 app.include_router(datasets_router, prefix="/v1", dependencies=_v1_dependencies)
 app.include_router(evaluations_router, prefix="/v1", dependencies=_v1_dependencies)
 app.include_router(results_router, prefix="/v1", dependencies=_v1_dependencies)
+
+
+@app.get("/metrics", include_in_schema=False)
+async def metrics() -> Response:
+    """Expõe as métricas do runner no formato de scrape do Prometheus.
+
+    Fica FORA de `/v1` de propósito: é o Prometheus (scraper de infra) quem
+    chama, não o cliente da API — mesma decisão do `/health`. Só há contadores
+    agregados (desfecho de runs, resultados com/sem nota, duração), nenhum dado
+    de dataset ou de usuário: o que vaza aqui já é público em `/health`.
+
+    Antes disto o eval não tinha métrica nenhuma: "quantas runs falharam na
+    última hora" só respondia abrindo a UI ou o banco.
+    """
+    return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
 @app.get("/health")
