@@ -1,7 +1,10 @@
 """Configuração central da aplicação via pydantic-settings."""
 
+import json
+from typing import Annotated, Any
+
 from pydantic import field_validator, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -23,7 +26,10 @@ class Settings(BaseSettings):
     JUDGE_API_KEY: str | None = None
     JUDGE_MODEL: str = "deepseek/deepseek-chat"
     APP_ENV: str = "development"
-    CORS_ORIGINS: list[str] = ["http://localhost:5174"]
+    # `NoDecode`: sem isso o pydantic-settings tenta `json.loads` no valor vindo
+    # do ambiente ANTES de qualquer validador — `https://a,https://b` morria com
+    # SettingsError no import (ver `_cors_origins_aceita_lista_separada_por_virgula`).
+    CORS_ORIGINS: Annotated[list[str], NoDecode] = ["http://localhost:5174"]
 
     # Chave de autenticação da própria API (header X-API-Key). None = auth
     # desabilitada (dev). Em produção, defina para fechar a API.
@@ -66,6 +72,30 @@ class Settings(BaseSettings):
     # que por si só não impede o consumo de memória. Default folgado o
     # bastante para o maior POST /samples legítimo (500 samples x ~40KB).
     MAX_REQUEST_BODY_BYTES: int = 25_000_000
+
+    @field_validator("CORS_ORIGINS", mode="before")
+    @classmethod
+    def _cors_origins_aceita_lista_separada_por_virgula(cls, value: Any) -> Any:
+        """Aceita `https://a,https://b` (e uma origem só), não só JSON.
+
+        `CORS_ORIGINS` é `list[str]`, e o pydantic-settings só decodifica lista
+        vinda do ambiente como JSON (`json.loads`). Na prática, `CORS_ORIGINS`
+        com duas origens — o que acontece no deploy (Cloud Run + Cloudflare
+        Pages) e é o formato natural de uma Variable do repositório usada pelo
+        CD — derrubava o processo no IMPORT com
+        `SettingsError: error parsing value for field "CORS_ORIGINS"`: o
+        container morria antes de abrir o `/health`, com stack de pydantic no
+        log e nenhuma pista do formato certo.
+
+        JSON continua funcionando igual (qualquer valor começando com `[` vai
+        para `json.loads`); string vazia vira lista vazia (nenhuma origem).
+        """
+        if not isinstance(value, str):
+            return value
+        raw = value.strip()
+        if raw.startswith("["):
+            return json.loads(raw)
+        return [origin.strip() for origin in raw.split(",") if origin.strip()]
 
     @field_validator("API_KEY", mode="before")
     @classmethod

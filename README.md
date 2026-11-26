@@ -61,7 +61,7 @@ Para o backend rodando local (fora do compose), crie `backend/.env` a partir do
 | `JUDGE_MODEL` | modelo usado como judge | `deepseek/deepseek-chat` |
 | `JUDGE_API_KEY` | chave virtual do gateway usada pelo judge; vazio = usa a mesma de `GATEWAY_API_KEY` | _(vazio, dev)_ |
 | `APP_ENV` | ambiente (`development`/`production`); em `production` exige `API_KEY` (fail-closed) | `development` |
-| `CORS_ORIGINS` | origens permitidas no CORS (JSON) | `["http://localhost:5174"]` |
+| `CORS_ORIGINS` | origens permitidas no CORS (JSON ou lista separada por vírgula; vazio = nenhuma) | `["http://localhost:5174"]` |
 | `API_KEY` | chave da própria API (header `X-API-Key`); vazio = auth desabilitada | _(vazio, dev)_ |
 | `RATE_LIMIT_PER_MINUTE` | requests/min por IP antes de 429 | `120` |
 | `RUN_CONCURRENCY` | samples processadas em paralelo por run | `5` |
