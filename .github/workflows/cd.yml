@@ -148,6 +148,50 @@ jobs:
             JUDGE_MODEL=${{ vars.JUDGE_MODEL }}
             CORS_ORIGINS=${{ vars.CORS_ORIGINS_PROD }}
 
+      - name: Smoke test (o backend publicado responde /health)
+        # `deploy-cloudrun` devolve sucesso quando a revisão fica pronta, mas
+        # isso só prova que o PROCESSO subiu. O `/health` do eval toca o banco
+        # de verdade (503 quando o Postgres/Neon não responde, ver
+        # backend/app/main.py) — e é justamente ele que ficava de fora: um
+        # `DATABASE_URL` inválido no Secret Manager ou uma migration pendente
+        # passavam como "deploy ok", o job `deploy-frontend` publicava a UI
+        # apontando para uma API que só devolve 503, e o incidente aparecia no
+        # navegador do usuário em vez da run do CD. Com este passo o deploy
+        # fica vermelho, com o motivo, antes de o frontend ir para o ar.
+        #
+        # python (stdlib) em vez de curl: já existe no runner, não depende de
+        # pacote externo. O loop cobre o cold start do banco gerenciado (a
+        # primeira conexão do Neon pode levar dezenas de segundos) sem
+        # transformar "banco acordando" em deploy falho.
+        env:
+          BACKEND_URL: ${{ steps.deploy.outputs.url }}
+        run: |
+          python3 - <<'PY'
+          import os
+          import time
+          import urllib.error
+          import urllib.request
+
+          base = (os.environ.get("BACKEND_URL") or "").rstrip("/")
+          if not base:
+              raise SystemExit("deploy-cloudrun nao devolveu a URL do servico")
+          url = f"{base}/health"
+          last = "sem resposta"
+          for _ in range(30):  # ~150s de tolerancia (30 x 5s)
+              try:
+                  with urllib.request.urlopen(url, timeout=10) as resp:
+                      if resp.status == 200:
+                          print(f"ok: {url} respondeu 200")
+                          raise SystemExit(0)
+                      last = f"HTTP {resp.status}"
+              except urllib.error.HTTPError as exc:
+                  last = f"HTTP {exc.code}"
+              except Exception as exc:  # noqa: BLE001 - so queremos o motivo no log
+                  last = repr(exc)
+              time.sleep(5)
+          raise SystemExit(f"{url} nao respondeu 200 em ~150s (ultimo: {last})")
+          PY
+
   deploy-frontend:
     needs: deploy-backend
     # Gate duplo: só deploya o front se a CI passou E o backend subiu. Sem o
